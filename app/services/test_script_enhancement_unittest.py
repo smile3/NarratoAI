@@ -4,6 +4,7 @@ from app.services.script_enhancement import (
     apply_script_optimization,
     build_script_optimization_prompt,
     clean_generated_title,
+    get_prompt_template,
     merge_optimized_narrations,
     parse_script_optimization_payload,
     parse_script_items_payload,
@@ -111,6 +112,26 @@ class ScriptEnhancementTests(unittest.TestCase):
         self.assertEqual("00:00:08,000-00:00:12,000", result[2]["timestamp"])
         self.assertEqual("真正的秘密，下一秒就藏不住了。", result[2]["narration"])
 
+    def test_apply_script_optimization_keeps_only_returned_items_to_allow_duration_pruning(self):
+        original_items = [
+            {"_id": 1, "timestamp": "00:00:00,000-00:00:20,000", "picture": "女主被羞辱", "narration": "原文1", "OST": 2},
+            {"_id": 2, "timestamp": "00:00:20,000-00:01:20,000", "picture": "无关铺垫", "narration": "原文2", "OST": 2},
+            {"_id": 3, "timestamp": "00:01:20,000-00:01:50,000", "picture": "男主揭穿真相", "narration": "原文3", "OST": 2},
+        ]
+        optimized_items = [
+            {"_id": 1, "narration": "她以为忍一忍就过去，可这一巴掌彻底改写了结局。"},
+            {"_id": 3, "narration": "下一秒，男主一句话让全场安静。"},
+        ]
+        hook = {"source_id": 3, "narration": "先看这一幕，真正的反转从这里开始。"}
+
+        result = apply_script_optimization(original_items, optimized_items, hook)
+
+        self.assertEqual([1, 2, 3], [item["_id"] for item in result])
+        self.assertEqual("00:01:20,000-00:01:50,000", result[0]["timestamp"])
+        self.assertEqual("00:00:00,000-00:00:20,000", result[1]["timestamp"])
+        self.assertEqual("00:01:20,000-00:01:50,000", result[2]["timestamp"])
+        self.assertNotIn("无关铺垫", [item.get("picture") for item in result])
+
     def test_build_script_optimization_prompt_requests_core_shot_hook(self):
         prompt = build_script_optimization_prompt(
             [{"_id": 1, "timestamp": "00:00:00,000-00:00:03,000", "picture": "核心镜头", "narration": "原文", "OST": 2}],
@@ -120,6 +141,26 @@ class ScriptEnhancementTests(unittest.TestCase):
         self.assertIn('"hook"', prompt)
         self.assertIn("最核心", prompt)
         self.assertIn("复制到视频最开始", prompt)
+
+    def test_build_script_optimization_prompt_requests_duration_pruning_and_suspense_end(self):
+        prompt = build_script_optimization_prompt(
+            [{"_id": 1, "timestamp": "00:00:00,000-00:06:10,000", "picture": "长剧情", "narration": "原文", "OST": 2}],
+            style="short_drama",
+        )
+
+        self.assertIn("3 分钟", prompt)
+        self.assertIn("5 分钟", prompt)
+        self.assertIn("可以删除", prompt)
+        self.assertIn("只保留", prompt)
+        self.assertIn("留下悬念", prompt)
+        self.assertIn("画面时长", prompt)
+
+    def test_all_prompt_styles_include_narration_duration_fit_rule(self):
+        for style in ["default", "short_drama", "movie", "variety", "science"]:
+            with self.subTest(style=style):
+                prompt = get_prompt_template(style)
+                self.assertIn("画面时长", prompt)
+                self.assertIn("每秒", prompt)
 
     def test_clean_generated_title_removes_wrappers_and_limits_length(self):
         raw_title = '```\n《所有人都以为她输了，下一秒全场安静》\n```\n第二行说明不要保留'

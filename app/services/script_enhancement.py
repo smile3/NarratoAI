@@ -64,6 +64,20 @@ PROMPT_STYLE_TEMPLATES: dict[str, dict[str, str]] = {
     },
 }
 
+GENERAL_DURATION_FIT_GUIDELINE = """
+时长匹配要求：
+1. 要根据画面时长控制文案长度，尽量做到每秒都有对应信息，不要让解说明显超出画面时长。
+2. 镜头短就少说，镜头长才适当展开，优先短句和高密度信息。
+""".strip()
+
+SHORT_DRAMA_DURATION_GUIDELINE = """
+短剧时长控制要求：
+1. 尽量把成片控制在 3 分钟左右，最多不要超过 5 分钟。
+2. 如果内容偏长，可以删除无关铺垫、重复解释和拖沓支线，只保留最核心、最能推进冲突的片段。
+3. 单个片段尽量短一点，节奏要快，但前后衔接必须自然，不能突兀断层。
+4. 结尾一定要留下悬念，不要把故事讲完。
+""".strip()
+
 
 def get_prompt_style_options() -> list[tuple[str, str]]:
     """Return prompt style options as (key, label)."""
@@ -73,8 +87,11 @@ def get_prompt_style_options() -> list[tuple[str, str]]:
 def get_prompt_template(style: str | None) -> str:
     """Return the editable default prompt for a selected narration style."""
     normalized = style if style in PROMPT_STYLE_TEMPLATES else "default"
-    return PROMPT_STYLE_TEMPLATES[normalized]["prompt"]
-
+    prompt = PROMPT_STYLE_TEMPLATES[normalized]["prompt"]
+    prompt = f"{prompt}\n\n{GENERAL_DURATION_FIT_GUIDELINE}"
+    if normalized == "short_drama":
+        prompt = f"{prompt}\n\n{SHORT_DRAMA_DURATION_GUIDELINE}"
+    return prompt
 
 def parse_script_items_payload(payload: Any) -> list[dict[str, Any]]:
     """Parse model JSON output and return a list of script item dictionaries."""
@@ -148,17 +165,43 @@ def merge_optimized_narrations(
     return merged
 
 
+def _normalize_script_item_id(item_id: Any) -> str:
+    return str(item_id).strip()
+
+
+def _select_retained_original_items(
+    original_items: list[dict[str, Any]],
+    optimized_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    retained_ids = [
+        _normalize_script_item_id(item.get("_id"))
+        for item in optimized_items
+        if isinstance(item, dict) and item.get("_id") is not None
+    ]
+    if not retained_ids:
+        return copy.deepcopy(original_items)
+
+    retained_id_set = set(retained_ids)
+    selected_items = [
+        item
+        for item in original_items
+        if _normalize_script_item_id(item.get("_id")) in retained_id_set
+    ]
+    return selected_items or copy.deepcopy(original_items)
+
+
 def apply_script_optimization(
     original_items: list[dict[str, Any]],
     optimized_items: list[dict[str, Any]],
     hook: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Rewrite narration and prepend a duplicated core-shot hook at the beginning."""
-    merged = merge_optimized_narrations(original_items, optimized_items)
+    """Rewrite narration, prune weak segments, and prepend a duplicated core-shot hook."""
+    retained_original_items = _select_retained_original_items(original_items, optimized_items)
+    merged = merge_optimized_narrations(retained_original_items, optimized_items)
     if not merged:
         return merged
 
-    hook_item = _build_hook_item(merged, hook or {})
+    hook_item = _build_hook_item(original_items, hook or {})
     with_hook = [hook_item, *copy.deepcopy(merged)]
     for index, item in enumerate(with_hook, 1):
         item["_id"] = index
@@ -213,19 +256,32 @@ def build_script_optimization_prompt(
         if isinstance(item, dict)
     ]
 
+    duration_control_prompt = """
+时长优化硬性要求：
+1. 尽量把成片控制在 3 分钟左右，最多不要超过 5 分钟。
+2. 如果超过目标时长，可以删除无关铺垫、重复镜头和拖沓支线，只保留最核心的爆点和最能推进剧情的片段。
+3. 删减后必须保持整体一致性，不能出现突兀断层。
+4. 结尾要留下悬念，不要把故事讲完。
+""".strip()
+
     return f"""
 请对下面已经生成的视频解说脚本做二次加工。
 
 创作风格要求：
 {style_prompt}
 
+时长优化要求：
+{duration_control_prompt}
+
 硬性规则：
 1. 先判断哪一个片段是最核心、最能吸引观众注意力的镜头。
 2. 为这个核心镜头单独写一段开场钩子文案，放在 hook 字段里；后续系统会把这个镜头复制到视频最开始播放一次。
-3. items 里只优化原片段 narration 字段，让语言更自然、更有悬念、更吸引人注意。
-4. 严禁修改原片段 timestamp、_id、OST、picture，也不要改变原片段数量和顺序。
-5. 不要新增不存在的情节，不要改变剪辑时间。
-6. 只输出 JSON，不要输出解释文字。
+3. items 里只保留最终要进视频的片段，可以删除无关铺垫、重复内容和节奏拖沓的片段。
+4. 保留的片段只优化原片段 narration 字段，让语言更自然、更有悬念、更吸引人注意。
+5. 严禁修改保留片段的 timestamp、_id、OST、picture，也不要改变保留片段的原始顺序。
+6. 如果总时长仍然偏长，优先删减非核心片段；要保持整体一致性，不要出现突兀断层。
+7. 结尾必须留下悬念，不要把故事讲完。
+8. 只输出 JSON，不要输出解释文字。
 
 输出格式：
 {{
