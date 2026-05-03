@@ -120,8 +120,10 @@ def generate_script_short(tr, params, custom_clips=5):
         progress_bar.progress(100)
         status_text.text("脚本生成完成！")
         st.success("视频脚本生成成功！")
+        return True
 
     except Exception as err:
         progress_bar.progress(100)
         st.error(f"生成过程中发生错误: {str(err)}")
         logger.exception(f"生成脚本时发生错误\n{traceback.format_exc()}")
+        return False

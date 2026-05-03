@@ -10,6 +10,9 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
+COMPOSE_CMD=""
+WEBUI_PORT="${NARRATOAI_WEBUI_PORT:-8501}"
+
 # 日志函数
 log_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
@@ -53,7 +56,11 @@ check_requirements() {
         exit 1
     fi
 
-    if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+    if docker compose version &> /dev/null; then
+        COMPOSE_CMD="docker compose"
+    elif command -v docker-compose &> /dev/null; then
+        COMPOSE_CMD="docker-compose"
+    else
         log_error "Docker Compose 未安装，请先安装 Docker Compose"
         exit 1
     fi
@@ -66,6 +73,16 @@ check_requirements() {
 
 # 检查配置文件
 check_config() {
+    if [ -d "config.toml" ]; then
+        if [ -z "$(find config.toml -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+            log_warning "config.toml 是空目录，删除后重新生成配置文件"
+            rmdir config.toml
+        else
+            log_error "config.toml 是目录且非空，请先备份并删除该目录，再重新运行部署"
+            exit 1
+        fi
+    fi
+
     if [ ! -f "config.toml" ]; then
         if [ -f "config.example.toml" ]; then
             log_warning "config.toml 不存在，复制示例配置文件"
@@ -87,15 +104,15 @@ build_image() {
         build_args="--no-cache"
     fi
 
-    docker-compose build $build_args
+    $COMPOSE_CMD build $build_args
 }
 
 # 启动服务
 start_services() {
     log_info "启动 NarratoAI 服务..."
 
-    docker-compose down 2>/dev/null || true
-    docker-compose up -d
+    $COMPOSE_CMD down 2>/dev/null || true
+    $COMPOSE_CMD up -d
 }
 
 # 等待服务就绪
@@ -106,7 +123,7 @@ wait_for_service() {
     local attempt=1
 
     while [ $attempt -le $max_attempts ]; do
-        if curl -f http://localhost:8501/_stcore/health &>/dev/null; then
+        if curl -f "http://localhost:${WEBUI_PORT}/_stcore/health" &>/dev/null; then
             log_info "服务已就绪"
             return 0
         fi
@@ -123,12 +140,12 @@ wait_for_service() {
 show_deployment_info() {
     echo
     log_info "NarratoAI 部署完成！"
-    echo "访问地址: http://localhost:8501"
+    echo "访问地址: http://localhost:${WEBUI_PORT}"
     echo
     echo "常用命令:"
-    echo "  查看日志: docker-compose logs -f"
-    echo "  停止服务: docker-compose down"
-    echo "  重启服务: docker-compose restart"
+    echo "  查看日志: $COMPOSE_CMD logs -f"
+    echo "  停止服务: $COMPOSE_CMD down"
+    echo "  重启服务: $COMPOSE_CMD restart"
 }
 
 # 主函数
@@ -175,7 +192,7 @@ main() {
         show_deployment_info
     else
         log_error "部署失败，请检查日志"
-        docker-compose logs --tail=20
+        $COMPOSE_CMD logs --tail=20
         exit 1
     fi
 }

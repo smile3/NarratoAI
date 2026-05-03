@@ -239,6 +239,12 @@ def start_subclip(task_id: str, params: VideoClipParams, subclip_path_videos: di
         'subtitle_bg_color': None,  # 直接使用None表示透明背景
         'subtitle_position': params.subtitle_position,
         'custom_position': params.custom_position,
+        'script_title': params.script_title,
+        'title_position': params.title_position,
+        'title_custom_position': params.title_custom_position,
+        'episode_name': params.episode_name,
+        'episode_position': params.episode_position,
+        'episode_custom_position': params.episode_custom_position,
         'threads': params.n_threads
     }
     generate_video.merge_materials(
@@ -453,6 +459,12 @@ def start_subclip_unified(task_id: str, params: VideoClipParams):
         'subtitle_bg_color': None,
         'subtitle_position': params.subtitle_position,
         'custom_position': params.custom_position,
+        'script_title': params.script_title,
+        'title_position': params.title_position,
+        'title_custom_position': params.title_custom_position,
+        'episode_name': params.episode_name,
+        'episode_position': params.episode_position,
+        'episode_custom_position': params.episode_custom_position,
         'threads': params.n_threads
     }
     generate_video.merge_materials(

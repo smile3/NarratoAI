@@ -150,7 +150,7 @@ JSON 必须包含以下键：
         batch_results = await self._analyze_batches(
             analyzer=analyzer,
             batches=batches,
-            custom_prompt=custom_prompt,
+            custom_prompt="",
             video_theme=video_theme,
             max_concurrency=concurrency,
             progress_callback=progress,

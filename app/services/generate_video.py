@@ -27,6 +27,7 @@ from PIL import ImageFont
 from app.utils import utils
 from app.models.schema import AudioVolumeDefaults
 from app.services.audio_normalizer import AudioNormalizer, normalize_audio_for_mixing
+from app.services.video_overlay import resolve_fixed_text_overlay_position, resolve_subtitle_position
 
 
 def is_valid_subtitle_file(subtitle_path: str) -> bool:
@@ -96,6 +97,10 @@ def merge_materials(
             - threads: 处理线程数，默认2
             - fps: 输出帧率，默认30
             - subtitle_enabled: 是否启用字幕，默认True
+            - script_title: 顶部标题文案，可选
+            - title_position: 标题位置，默认 top
+            - episode_name: 剧集名称，默认空
+            - episode_position: 剧集位置，默认 bottom（会跟随标题组避开字幕）
             
     返回:
         输出视频的路径
@@ -121,6 +126,12 @@ def merge_materials(
     threads = options.get('threads', 2)
     fps = options.get('fps', 30)
     subtitle_enabled = options.get('subtitle_enabled', True)
+    script_title = str(options.get('script_title', '') or '').strip()
+    title_position = options.get('title_position', 'top')
+    title_custom_position = options.get('title_custom_position', 5)
+    episode_name = str(options.get('episode_name', '') or '').strip()
+    episode_position = options.get('episode_position', 'bottom')
+    episode_custom_position = options.get('episode_custom_position', 82)
 
     # 配置日志 - 便于调试问题
     logger.info(f"音量配置详情:")
@@ -131,6 +142,8 @@ def merge_materials(
     logger.info(f"字幕配置详情:")
     logger.info(f"  - 是否启用字幕: {subtitle_enabled}")
     logger.info(f"  - 字幕文件路径: {subtitle_path}")
+    logger.info(f"  - 脚本标题: {script_title}")
+    logger.info(f"  - 剧集名称: {episode_name}")
 
     # 音量参数验证
     def validate_volume(volume, name):
@@ -271,7 +284,7 @@ def merge_materials(
     
     # 处理字体路径
     font_path = None
-    if subtitle_path and subtitle_font:
+    if (subtitle_path or script_title or episode_name) and subtitle_font:
         font_path = os.path.join(utils.font_dir(), subtitle_font)
         if os.name == "nt":
             font_path = font_path.replace("\\", "/")
@@ -325,21 +338,14 @@ def merge_materials(
         _clip = _clip.with_duration(duration)
         
         # 设置字幕位置
-        if subtitle_position == "bottom":
-            _clip = _clip.with_position(("center", video_height * 0.95 - _clip.h))
-        elif subtitle_position == "top":
-            _clip = _clip.with_position(("center", video_height * 0.05))
-        elif subtitle_position == "custom":
-            margin = 10
-            max_y = video_height - _clip.h - margin
-            min_y = margin
-            custom_y = (video_height - _clip.h) * (custom_position / 100)
-            custom_y = max(
-                min_y, min(custom_y, max_y)
+        _clip = _clip.with_position(
+            resolve_subtitle_position(
+                subtitle_position,
+                video_size=(video_width, video_height),
+                clip_size=(_clip.w, _clip.h),
+                custom_position=custom_position,
             )
-            _clip = _clip.with_position(("center", custom_y))
-        else:  # center
-            _clip = _clip.with_position(("center", "center"))
+        )
             
         return _clip
         
@@ -382,6 +388,29 @@ def merge_materials(
         logger.info("字幕已禁用，跳过字幕处理")
     elif not subtitle_path:
         logger.info("未提供字幕文件路径，跳过字幕处理")
+
+    fixed_text_clips = []
+    if subtitle_enabled:
+        fixed_text_clips = create_fixed_text_overlays(
+            script_title=script_title,
+            episode_name=episode_name,
+            font_path=font_path,
+            video_width=video_width,
+            video_height=video_height,
+            duration=video_clip.duration,
+            font_size=subtitle_font_size,
+            color=subtitle_color,
+            stroke_color=stroke_color,
+            stroke_width=stroke_width,
+            subtitle_position=subtitle_position,
+            title_position=title_position,
+            title_custom_position=title_custom_position,
+            episode_position=episode_position,
+            episode_custom_position=episode_custom_position,
+        )
+    if fixed_text_clips:
+        video_clip = CompositeVideoClip([video_clip, *fixed_text_clips])
+        logger.info(f"已添加{len(fixed_text_clips)}个标题/剧集叠字")
     
     # 导出最终视频
     try:
@@ -472,6 +501,120 @@ def wrap_text(text, max_width, font="Arial", fontsize=60):
     result = "\n".join(_wrapped_lines_).strip()
     height = len(_wrapped_lines_) * height
     return result, height
+
+
+def create_fixed_text_overlays(
+    *,
+    script_title: str,
+    episode_name: str,
+    font_path: str | None,
+    video_width: int,
+    video_height: int,
+    duration: float,
+    font_size: int,
+    color: str,
+    stroke_color: str,
+    stroke_width: float,
+    subtitle_position: str,
+    title_position: str,
+    title_custom_position: float,
+    episode_position: str,
+    episode_custom_position: float,
+) -> list:
+    """Create persistent title and episode text overlays for the whole video."""
+    overlays = []
+    title_text = (script_title or "").strip()
+    episode_text = (episode_name or "").strip()
+    if not title_text and not episode_text:
+        return overlays
+
+    title_clip = None
+    title_position_resolved = None
+    title_clip_size = None
+
+    title_font_size = max(int(font_size * 1.05), int(font_size) + 4)
+    episode_font_size = max(int(font_size * 0.72), 28)
+
+    if title_text:
+        wrapped_title, _height = wrap_text(
+            title_text,
+            max_width=video_width * 0.86,
+            font=font_path,
+            fontsize=title_font_size,
+        )
+        title_clip = _create_fixed_text_clip(
+            text=wrapped_title,
+            font_path=font_path,
+            font_size=title_font_size,
+            color=color,
+            stroke_color=stroke_color,
+            stroke_width=max(stroke_width, 2.0),
+            duration=duration,
+        )
+        title_position_resolved = resolve_fixed_text_overlay_position(
+            kind="title",
+            position=title_position,
+            video_size=(video_width, video_height),
+            clip_size=(title_clip.w, title_clip.h),
+            subtitle_position=subtitle_position,
+            custom_position=title_custom_position,
+        )
+        title_clip_size = (title_clip.w, title_clip.h)
+        overlays.append(title_clip.with_position(title_position_resolved))
+
+    if episode_text:
+        episode_clip = _create_fixed_text_clip(
+            text=episode_text,
+            font_path=font_path,
+            font_size=episode_font_size,
+            color=color,
+            stroke_color=stroke_color,
+            stroke_width=max(stroke_width, 2.0),
+            duration=duration,
+        )
+        episode_position_resolved = resolve_fixed_text_overlay_position(
+            kind="episode",
+            position=episode_position,
+            video_size=(video_width, video_height),
+            clip_size=(episode_clip.w, episode_clip.h),
+            subtitle_position=subtitle_position,
+            custom_position=episode_custom_position,
+            reference_position=title_position_resolved,
+            reference_clip_size=title_clip_size,
+        )
+        overlays.append(episode_clip.with_position(episode_position_resolved))
+
+    return overlays
+
+
+def _create_fixed_text_clip(
+    *,
+    text: str,
+    font_path: str | None,
+    font_size: int,
+    color: str,
+    stroke_color: str,
+    stroke_width: float,
+    duration: float,
+):
+    try:
+        clip = TextClip(
+            text=text,
+            font=font_path,
+            font_size=font_size,
+            color=color,
+            bg_color=None,
+            stroke_color=stroke_color,
+            stroke_width=stroke_width,
+        )
+    except Exception:
+        clip = TextClip(
+            text=text,
+            font=font_path,
+            font_size=font_size,
+            color=color,
+        )
+    return clip.with_start(0).with_duration(duration)
 
 
 if __name__ == '__main__':

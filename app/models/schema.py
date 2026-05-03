@@ -164,6 +164,7 @@ class VideoClipParams(BaseModel):
     video_clip_json: Optional[list] = Field(default=[], description="LLM 生成的视频剪辑脚本内容")
     video_clip_json_path: Optional[str] = Field(default="", description="LLM 生成的视频剪辑脚本路径")
     video_origin_path: Optional[str] = Field(default="", description="原视频路径")
+    script_title: Optional[str] = Field(default="", description="视频推广标题")
     video_aspect: Optional[VideoAspect] = Field(default=VideoAspect.portrait.value, description="视频比例")
     video_language: Optional[str] = Field(default="zh-CN", description="视频语言")
 
@@ -190,6 +191,11 @@ class VideoClipParams(BaseModel):
     stroke_width: float = 1.5                   # 描边宽度
     subtitle_position: str = "bottom"   # top, bottom, center, custom
     custom_position: float = 70.0       # 自定义位置
+    title_position: str = "top"         # top, bottom, center, custom
+    title_custom_position: float = 5.0   # 标题自定义位置
+    episode_name: str = "上集"           # 剧集名称
+    episode_position: str = "bottom"     # top, bottom, center, custom
+    episode_custom_position: float = 82.0 # 剧集自定义位置
 
     n_threads: Optional[int] = Field(default=16, description="线程数")    # 线程数，有助于提升视频处理速度
 
@@ -206,4 +212,3 @@ class SubtitlePosition(str, Enum):
     TOP = "top"
     CENTER = "center"
     BOTTOM = "bottom"
-

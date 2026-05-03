@@ -8,6 +8,7 @@ from loguru import logger
 
 from app.config import config
 from app.models.schema import VideoClipParams
+from app.services import script_enhancement
 from app.services.subtitle_text import decode_subtitle_bytes
 from app.utils import utils, check_script
 from webui.tools.generate_script_docu import generate_script_docu
@@ -43,6 +44,9 @@ def render_script_panel(tr):
         else:
             # 默认为空
             pass
+
+        if script_path != "auto":
+            render_script_title_display(tr)
 
         # 渲染脚本操作按钮
         render_script_buttons(tr, params)
@@ -233,11 +237,19 @@ def render_video_file(tr, params):
             display_name = file.replace(config.root_dir, "")
             video_list.append((display_name, file))
 
+    saved_video_path = st.session_state.get('video_origin_path', '')
+    selected_video_default = 0
+    for index, (_label, candidate_path) in enumerate(video_list):
+        if candidate_path == saved_video_path:
+            selected_video_default = index
+            break
+
     selected_video_index = st.selectbox(
         tr("Video File"),
-        index=0,
+        index=selected_video_default,
         options=range(len(video_list)),
-        format_func=lambda x: video_list[x][0]
+        format_func=lambda x: video_list[x][0],
+        key="video_file_selection",
     )
 
     video_path = video_list[selected_video_index][1]
@@ -291,9 +303,40 @@ def render_short_generate_options(tr):
 def render_video_details(tr):
     """画面解说 渲染视频主题和提示词"""
     video_theme = st.text_input(tr("Video Theme"))
+    st.checkbox(
+        tr("Auto Generate Script Title"),
+        value=st.session_state.get('auto_generate_script_title', True),
+        key="auto_generate_script_title",
+        help=tr("Automatically generate a promotional title after visual narration script generation"),
+    )
+
+    prompt_options = script_enhancement.get_prompt_style_options()
+    prompt_keys = [key for key, _label in prompt_options]
+    prompt_labels = {key: label for key, label in prompt_options}
+    saved_prompt_style = st.session_state.get('prompt_style', 'default')
+    if saved_prompt_style not in prompt_keys:
+        saved_prompt_style = 'default'
+
+    if 'custom_prompt_text_area' not in st.session_state:
+        st.session_state['custom_prompt_text_area'] = script_enhancement.get_prompt_template(saved_prompt_style)
+
+    def refresh_prompt_template():
+        selected_style = st.session_state.get('prompt_style', 'default')
+        st.session_state['custom_prompt_text_area'] = script_enhancement.get_prompt_template(selected_style)
+
+    selected_style = st.selectbox(
+        tr("Prompt Style"),
+        options=prompt_keys,
+        format_func=lambda key: prompt_labels[key],
+        index=prompt_keys.index(saved_prompt_style),
+        key="prompt_style",
+        on_change=refresh_prompt_template,
+        help=tr("Switch default prompt templates for different narration styles"),
+    )
+
     custom_prompt = st.text_area(
         tr("Generation Prompt"),
-        value=st.session_state.get('video_plot', ''),
+        key="custom_prompt_text_area",
         help=tr("Custom prompt for LLM, leave empty to use default prompt"),
         height=180
     )
@@ -320,6 +363,17 @@ def render_video_details(tr):
     st.session_state['video_theme'] = video_theme
     st.session_state['custom_prompt'] = custom_prompt
     return video_theme, custom_prompt
+
+
+def render_script_title_display(tr):
+    """在非逐帧模式下显示当前脚本标题。"""
+    pending_title = st.session_state.pop('_generated_script_title_pending', None)
+    if pending_title is not None:
+        st.session_state['script_title'] = pending_title
+
+    script_title = st.session_state.get('script_title', '')
+    if script_title:
+        st.text_input(tr("Script Title"), value=script_title, disabled=True)
 
 
 def short_drama_summary(tr):
@@ -509,22 +563,32 @@ def render_script_buttons(tr, params):
     else:
         button_name = tr("Please Select Script File")
 
-    if st.button(button_name, key="script_action", disabled=not script_path):
-        if script_path == "auto":
-            # 执行纪录片视频脚本生成（视频无字幕无配音）
-            generate_script_docu(params)
-        elif script_path == "short":
-            # 执行 短剧混剪 脚本生成
-            custom_clips = st.session_state.get('custom_clips')
-            generate_script_short(tr, params, custom_clips)
-        elif script_path == "summary":
-            # 执行 短剧解说 脚本生成
-            subtitle_path = st.session_state.get('subtitle_path')
-            video_theme = st.session_state.get('video_theme')
-            temperature = st.session_state.get('temperature')
-            generate_script_short_sunmmary(params, subtitle_path, video_theme, temperature)
-        else:
-            load_script(tr, script_path)
+    if script_path in ["auto", "short", "summary"]:
+        st.checkbox(
+            tr("Enable Script Polishing"),
+            value=st.session_state.get('enable_script_polishing', False),
+            key="enable_script_polishing",
+            help=tr("Polish generated narration without changing timestamps"),
+        )
+
+    if script_path == "auto":
+        action_cols = st.columns(2)
+        with action_cols[0]:
+            if st.button(button_name, key="script_action", disabled=not script_path, use_container_width=True):
+                run_script_action(tr, params, script_path)
+        with action_cols[1]:
+            if st.button(
+                tr("Generate Script Save and Create Video"),
+                key="script_action_save_video",
+                disabled=not script_path,
+                use_container_width=True,
+                type="primary",
+            ):
+                if run_script_action(tr, params, script_path):
+                    save_current_script_and_schedule_video(tr)
+    else:
+        if st.button(button_name, key="script_action", disabled=not script_path):
+            run_script_action(tr, params, script_path)
 
     # 视频脚本编辑区
     video_clip_json_details = st.text_area(
@@ -533,9 +597,164 @@ def render_script_buttons(tr, params):
         height=500
     )
 
+    if is_file_script_mode(script_path):
+        if st.button(tr("AI Polish Short Drama Script"), key="polish_loaded_script", use_container_width=True):
+            polish_loaded_script_as_short_drama(tr, video_clip_json_details)
+
     # 操作按钮行 - 合并格式检查和保存功能
     if st.button(tr("Save Script"), key="save_script", use_container_width=True):
         save_script_with_validation(tr, video_clip_json_details)
+
+
+def is_file_script_mode(script_path: str) -> bool:
+    """判断当前是否为选择/上传脚本模式下的真实脚本文件。"""
+    return bool(script_path) and script_path not in ["auto", "short", "summary", "upload_script"]
+
+
+def run_script_action(tr, params, script_path):
+    """执行当前脚本动作，并在需要时进行二次加工。"""
+    if script_path == "auto":
+        success = generate_script_docu(params)
+        if not success:
+            return False
+        if not maybe_polish_generated_script(tr):
+            return False
+        if not maybe_generate_script_title_after_generation(tr):
+            return False
+        return bool(st.session_state.get('video_clip_json'))
+    elif script_path == "short":
+        custom_clips = st.session_state.get('custom_clips')
+        success = generate_script_short(tr, params, custom_clips)
+        return bool(success and maybe_polish_generated_script(tr) and st.session_state.get('video_clip_json'))
+    elif script_path == "summary":
+        subtitle_path = st.session_state.get('subtitle_path')
+        video_theme = st.session_state.get('video_theme')
+        temperature = st.session_state.get('temperature')
+        success = generate_script_short_sunmmary(params, subtitle_path, video_theme, temperature)
+        return bool(success and maybe_polish_generated_script(tr) and st.session_state.get('video_clip_json'))
+    else:
+        load_script(tr, script_path)
+        return False
+
+
+def maybe_generate_script_title_after_generation(tr):
+    """逐帧解说生成成功后，按勾选项自动生成标题。"""
+    if not st.session_state.get('auto_generate_script_title', True):
+        st.session_state['script_title'] = ''
+        return True
+
+    script_items = st.session_state.get('video_clip_json', [])
+    if not script_items:
+        return False
+
+    try:
+        with st.spinner(tr("Generating Script Title")):
+            generated_title = script_enhancement.generate_script_title(
+                script_items,
+                video_theme=st.session_state.get('video_theme', ''),
+            )
+        st.session_state['script_title'] = generated_title
+        st.success(tr("Script title generated"))
+        return True
+    except Exception as err:
+        logger.error(f"生成脚本标题失败: {traceback.format_exc()}")
+        st.error(f"{tr('Failed to generate script title')}: {str(err)}")
+        return False
+
+
+def polish_loaded_script_as_short_drama(tr, video_clip_json_details):
+    """对选择/上传脚本页面里的脚本按短剧推广方向进行二次加工。"""
+    script_content = get_script_content_for_polishing(video_clip_json_details)
+    if not script_content:
+        st.error(tr("Please generate or load a script first"))
+        return False
+
+    validation = check_script.check_format(script_content)
+    if not validation.get('success'):
+        st.error(f"{tr('Script format check failed')}: {validation.get('message', '')}")
+        details = validation.get('details')
+        if details:
+            st.error(details)
+        return False
+
+    try:
+        script_items = json.loads(script_content)
+        with st.spinner(tr("Polishing Loaded Script")):
+            polished = script_enhancement.optimize_script_narrations(
+                script_items,
+                style="short_drama",
+                custom_instruction="",
+            )
+            generated_title = script_enhancement.generate_script_title(
+                polished,
+                video_theme=st.session_state.get('video_theme', ''),
+            )
+
+        st.session_state['video_clip_json'] = polished
+        st.session_state['script_title'] = generated_title
+        st.success(tr("Loaded script polished successfully"))
+        st.rerun()
+        return True
+    except Exception as err:
+        logger.error(f"选择/上传脚本二次加工失败: {traceback.format_exc()}")
+        st.error(f"{tr('Failed to polish loaded script')}: {str(err)}")
+        return False
+
+
+def get_script_content_for_polishing(video_clip_json_details):
+    """获取当前要二次加工的脚本文本，优先使用编辑区，其次使用已选脚本文件。"""
+    content = str(video_clip_json_details or "").strip()
+    if content and content != "[]":
+        return content
+
+    script_path = st.session_state.get('video_clip_json_path', '')
+    if script_path and script_path.endswith(".json") and os.path.exists(script_path):
+        with open(script_path, "r", encoding="utf-8") as f:
+            return utils.clean_model_output(f.read()).strip()
+
+    return content
+
+
+def maybe_polish_generated_script(tr):
+    """根据选项对已生成脚本做二次加工。"""
+    if not st.session_state.get('enable_script_polishing'):
+        return True
+
+    script_items = st.session_state.get('video_clip_json', [])
+    if not script_items:
+        return False
+
+    try:
+        with st.spinner(tr("Polishing Script")):
+            polished = script_enhancement.optimize_script_narrations(
+                script_items,
+                style=st.session_state.get('prompt_style', 'short_drama'),
+                custom_instruction=st.session_state.get('custom_prompt', ''),
+            )
+        st.session_state['video_clip_json'] = polished
+        st.success(tr("Script polished successfully"))
+        return True
+    except Exception as err:
+        logger.error(f"二次加工脚本失败: {traceback.format_exc()}")
+        st.error(f"{tr('Failed to polish script')}: {str(err)}")
+        return False
+
+
+def save_current_script_and_schedule_video(tr):
+    """保存当前脚本并标记下一次渲染自动生成视频。"""
+    script_items = st.session_state.get('video_clip_json', [])
+    if not script_items:
+        st.error(tr("Please generate or load a script first"))
+        return
+
+    script_content = json.dumps(script_items, ensure_ascii=False, indent=2)
+    save_path = save_script_with_validation(tr, script_content, rerun=False)
+    if save_path:
+        st.session_state['_auto_generate_video_after_script_save'] = True
+        st.session_state['_switch_to_file_mode'] = True
+        st.success(tr("Script saved. Video generation will start now."))
+        time.sleep(0.5)
+        st.rerun()
 
 
 def load_script(tr, script_path):
@@ -552,7 +771,7 @@ def load_script(tr, script_path):
         st.error(f"{tr('Failed to load script')}: {str(e)}")
 
 
-def save_script_with_validation(tr, video_clip_json_details):
+def save_script_with_validation(tr, video_clip_json_details, *, rerun=True):
     """保存视频脚本（包含格式验证）"""
     if not video_clip_json_details:
         st.error(tr("请输入视频脚本"))
@@ -616,12 +835,12 @@ def save_script_with_validation(tr, video_clip_json_details):
                 # 更新配置
                 config.app["video_clip_json_path"] = save_path
 
-                # 显示成功消息
                 st.success("✅ 脚本格式验证通过，保存成功！")
 
-                # 强制重新加载页面更新选择框
-                time.sleep(0.5)  # 给一点时间让用户看到成功消息
-                st.rerun()
+                if rerun:
+                    time.sleep(0.5)  # 给一点时间让用户看到成功消息
+                    st.rerun()
+                return save_path
 
         except Exception as err:
             st.error(f"{tr('Failed to save script')}: {str(err)}")
@@ -638,5 +857,6 @@ def get_script_params():
         'video_clip_json_path': st.session_state.get('video_clip_json_path', ''),
         'video_origin_path': st.session_state.get('video_origin_path', ''),
         'video_name': st.session_state.get('video_name', ''),
-        'video_plot': st.session_state.get('video_plot', '')
+        'video_plot': st.session_state.get('video_plot', ''),
+        'script_title': st.session_state.get('script_title', ''),
     }

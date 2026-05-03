@@ -7,11 +7,15 @@ services:
     container_name: narratoai-webui
 
     ports:
-      - "8501:8501"
+      - "${NARRATOAI_WEBUI_PORT:-8501}:8501"
 
     volumes:
       - ./storage:/NarratoAI/storage
-      - ./config.toml:/NarratoAI/config.toml
+      - type: bind
+        source: ./config.toml
+        target: /NarratoAI/config.toml
+        bind:
+          create_host_path: false
       - ./resource:/NarratoAI/resource:rw
 
     environment:

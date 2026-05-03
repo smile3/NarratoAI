@@ -9,6 +9,13 @@ log() {
 # 函数：安装运行时依赖
 install_runtime_dependencies() {
     log "检查并安装运行时依赖..."
+
+    # Docker 镜像构建阶段已经把 requirements.txt 安装进 /opt/venv。
+    # 运行时使用非 root 用户，不能再向该虚拟环境执行 --user 安装。
+    if [ -n "${VIRTUAL_ENV:-}" ] || [ "$(id -u)" -ne 0 ]; then
+        log "使用镜像内预装依赖，跳过运行时安装"
+        return 0
+    fi
     
     # 检查是否需要安装新的依赖
     local requirements_file="requirements.txt"

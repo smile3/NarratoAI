@@ -36,10 +36,10 @@ class VideoProcessor:
 
         self.video_path = video_path
         self.video_info = self._get_video_info()
-        self.fps = float(self.video_info.get('fps', 25))
-        self.duration = float(self.video_info.get('duration', 0))
-        self.width = int(self.video_info.get('width', 0))
-        self.height = int(self.video_info.get('height', 0))
+        self.fps = self._safe_float(self.video_info.get('fps'), default=25.0)
+        self.duration = self._safe_float(self.video_info.get('duration'), default=0.0)
+        self.width = self._safe_int(self.video_info.get('width'), default=0)
+        self.height = self._safe_int(self.video_info.get('height'), default=0)
         self.total_frames = int(self.fps * self.duration)
 
     def _get_video_info(self) -> Dict[str, str]:
@@ -71,9 +71,14 @@ class VideoProcessor:
             if 'r_frame_rate' in info:
                 try:
                     num, den = map(int, info['r_frame_rate'].split('/'))
-                    info['fps'] = str(num / den)
-                except ValueError:
+                    info['fps'] = str(num / den) if den else '25'
+                except (TypeError, ValueError):
                     info['fps'] = info.get('r_frame_rate', '25')
+
+            if self._safe_float(info.get('duration'), default=None) is None:
+                format_duration = self._get_format_duration()
+                if format_duration is not None:
+                    info['duration'] = str(format_duration)
 
             return info
 
@@ -85,6 +90,42 @@ class VideoProcessor:
                 'fps': '25',
                 'duration': '0'
             }
+
+    def _get_format_duration(self) -> float | None:
+        cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=0",
+            self.video_path,
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"获取容器时长失败: {e.stderr}")
+            return None
+
+        for line in result.stdout.strip().split('\n'):
+            if '=' not in line:
+                continue
+            key, value = line.split('=', 1)
+            if key == 'duration':
+                return self._safe_float(value, default=None)
+        return None
+
+    @staticmethod
+    def _safe_float(value, default: float | None = 0.0) -> float | None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _safe_int(value, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
 
     def extract_frames_by_interval(self, output_dir: str, interval_seconds: float = 5.0,
                                   use_hw_accel: bool = True) -> List[int]:

@@ -41,6 +41,7 @@ def render_subtitle_panel(tr):
             if enable_subtitles:
                 render_font_settings(tr)
                 render_position_settings(tr)
+                render_title_episode_settings(tr)
                 render_style_settings(tr)
 
 
@@ -127,6 +128,67 @@ def render_position_settings(tr):
             st.error(tr("Please enter a valid number"))
 
 
+def render_title_episode_settings(tr):
+    """渲染标题和剧集叠字设置。"""
+    st.session_state.setdefault('episode_name', '上集')
+
+    fixed_text_positions = [
+        (tr("Top"), "top"),
+        (tr("Center"), "center"),
+        (tr("Bottom"), "bottom"),
+        (tr("Custom"), "custom"),
+    ]
+
+    title_cols = st.columns(2)
+    with title_cols[0]:
+        title_index = st.selectbox(
+            tr("Title Position"),
+            index=0,
+            options=range(len(fixed_text_positions)),
+            format_func=lambda x: fixed_text_positions[x][0],
+            key="title_position_selection",
+        )
+        title_position = fixed_text_positions[title_index][1]
+        st.session_state['title_position'] = title_position
+
+        if title_position == "custom":
+            title_custom_position = st.number_input(
+                tr("Title Custom Position (% from top)"),
+                min_value=0.0,
+                max_value=100.0,
+                value=float(st.session_state.get('title_custom_position', 5.0)),
+                step=1.0,
+            )
+            st.session_state['title_custom_position'] = title_custom_position
+
+    with title_cols[1]:
+        st.text_input(
+            tr("Episode Name"),
+            help=tr("Episode label shown with the title"),
+            key="episode_name",
+        )
+
+    episode_index = st.selectbox(
+        tr("Episode Position"),
+        index=2,
+        options=range(len(fixed_text_positions)),
+        format_func=lambda x: fixed_text_positions[x][0],
+        key="episode_position_selection",
+    )
+    episode_position = fixed_text_positions[episode_index][1]
+    st.session_state['episode_position'] = episode_position
+
+    if episode_position == "custom":
+        episode_custom_position = st.number_input(
+            tr("Episode Custom Position (% from top)"),
+            min_value=0.0,
+            max_value=100.0,
+            value=float(st.session_state.get('episode_custom_position', 82.0)),
+            step=1.0,
+        )
+        st.session_state['episode_custom_position'] = episode_custom_position
+
+
 def render_style_settings(tr):
     """渲染样式设置"""
     stroke_cols = st.columns([0.3, 0.7])
@@ -159,6 +221,11 @@ def get_subtitle_params():
         'text_fore_color': st.session_state.get('text_fore_color', '#FFFFFF'),
         'subtitle_position': st.session_state.get('subtitle_position', 'bottom'),
         'custom_position': st.session_state.get('custom_position', 70.0),
+        'title_position': st.session_state.get('title_position', 'top'),
+        'title_custom_position': st.session_state.get('title_custom_position', 5.0),
+        'episode_name': st.session_state.get('episode_name', '上集'),
+        'episode_position': st.session_state.get('episode_position', 'bottom'),
+        'episode_custom_position': st.session_state.get('episode_custom_position', 82.0),
         'stroke_color': st.session_state.get('stroke_color', '#000000'),
         'stroke_width': st.session_state.get('stroke_width', 1.5),
     }

@@ -131,95 +131,87 @@ def tr(key):
 def render_generate_button():
     """渲染生成按钮和处理逻辑"""
     if st.button(tr("Generate Video"), use_container_width=True, type="primary"):
-        from app.services import task as tm
-        from app.services import state as sm
-        from app.models import const
-        import threading
-        import time
-        import uuid
+        generate_video_from_current_settings()
 
-        config.save_config()
 
-        # 移除task_id检查 - 现在使用统一裁剪策略，不再需要预裁剪
-        # 直接检查必要的文件是否存在
-        if not st.session_state.get('video_clip_json_path'):
-            st.error(tr("脚本文件不能为空"))
-            return
-        if not st.session_state.get('video_origin_path'):
-            st.error(tr("视频文件不能为空"))
-            return
+def generate_video_from_current_settings():
+    """从当前UI状态收集参数并生成视频。"""
+    from app.services import task as tm
+    from app.services import state as sm
+    from app.models import const
+    import threading
+    import time
+    import uuid
 
-        # 获取所有参数
-        script_params = script_settings.get_script_params()
-        video_params = video_settings.get_video_params()
-        audio_params = audio_settings.get_audio_params()
-        subtitle_params = subtitle_settings.get_subtitle_params()
+    config.save_config()
 
-        # 合并所有参数
-        all_params = {
-            **script_params,
-            **video_params,
-            **audio_params,
-            **subtitle_params
-        }
+    if not st.session_state.get('video_clip_json_path'):
+        st.error(tr("脚本文件不能为空"))
+        return
+    if not st.session_state.get('video_origin_path'):
+        st.error(tr("视频文件不能为空"))
+        return
 
-        # 创建参数对象
-        params = VideoClipParams(**all_params)
+    script_params = script_settings.get_script_params()
+    video_params = video_settings.get_video_params()
+    audio_params = audio_settings.get_audio_params()
+    subtitle_params = subtitle_settings.get_subtitle_params()
 
-        # 生成一个新的task_id用于本次处理
-        task_id = str(uuid.uuid4())
+    all_params = {
+        **script_params,
+        **video_params,
+        **audio_params,
+        **subtitle_params
+    }
 
-        # 创建进度条
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+    params = VideoClipParams(**all_params)
+    task_id = str(uuid.uuid4())
+    progress_bar = st.progress(0)
+    status_text = st.empty()
 
-        def run_task():
-            try:
-                tm.start_subclip_unified(
-                    task_id=task_id,
-                    params=params
-                )
-            except Exception as e:
-                logger.error(f"任务执行失败: {e}")
-                sm.state.update_task(task_id, state=const.TASK_STATE_FAILED, message=str(e))
+    def run_task():
+        try:
+            tm.start_subclip_unified(
+                task_id=task_id,
+                params=params
+            )
+        except Exception as e:
+            logger.error(f"任务执行失败: {e}")
+            sm.state.update_task(task_id, state=const.TASK_STATE_FAILED, message=str(e))
 
-        # 在新线程中启动任务
-        thread = threading.Thread(target=run_task)
-        thread.start()
+    thread = threading.Thread(target=run_task)
+    thread.start()
 
-        # 轮询任务状态
-        while True:
-            task = sm.state.get_task(task_id)
-            if task:
-                progress = task.get("progress", 0)
-                state = task.get("state")
-                
-                # 更新进度条
-                progress_bar.progress(progress / 100)
-                status_text.text(f"Processing... {progress}%")
+    while True:
+        task = sm.state.get_task(task_id)
+        if task:
+            progress = task.get("progress", 0)
+            state = task.get("state")
 
-                if state == const.TASK_STATE_COMPLETE:
-                    status_text.text(tr("视频生成完成"))
-                    progress_bar.progress(1.0)
-                    
-                    # 显示结果
-                    video_files = task.get("videos", [])
-                    try:
-                        if video_files:
-                            player_cols = st.columns(len(video_files) * 2 + 1)
-                            for i, url in enumerate(video_files):
-                                player_cols[i * 2 + 1].video(url)
-                    except Exception as e:
-                        logger.error(f"播放视频失败: {e}")
-                    
-                    st.success(tr("视频生成完成"))
-                    break
-                
-                elif state == const.TASK_STATE_FAILED:
-                    st.error(f"任务失败: {task.get('message', 'Unknown error')}")
-                    break
-            
-            time.sleep(0.5)
+            progress_bar.progress(progress / 100)
+            status_text.text(f"Processing... {progress}%")
+
+            if state == const.TASK_STATE_COMPLETE:
+                status_text.text(tr("视频生成完成"))
+                progress_bar.progress(1.0)
+
+                video_files = task.get("videos", [])
+                try:
+                    if video_files:
+                        player_cols = st.columns(len(video_files) * 2 + 1)
+                        for i, url in enumerate(video_files):
+                            player_cols[i * 2 + 1].video(url)
+                except Exception as e:
+                    logger.error(f"播放视频失败: {e}")
+
+                st.success(tr("视频生成完成"))
+                break
+
+            elif state == const.TASK_STATE_FAILED:
+                st.error(f"任务失败: {task.get('message', 'Unknown error')}")
+                break
+
+        time.sleep(0.5)
 
 
 def get_voice_name_for_tts_engine(tts_engine: str) -> str:
@@ -254,6 +246,12 @@ def get_jianying_export_params() -> VideoClipParams:
         text_fore_color=st.session_state.get('text_fore_color', '#FFFFFF'),
         subtitle_position=st.session_state.get('subtitle_position', 'bottom'),
         custom_position=st.session_state.get('custom_position', 70.0),
+        script_title=st.session_state.get('script_title', ''),
+        title_position=st.session_state.get('title_position', 'top'),
+        title_custom_position=st.session_state.get('title_custom_position', 5.0),
+        episode_name=st.session_state.get('episode_name', '上集'),
+        episode_position=st.session_state.get('episode_position', 'bottom'),
+        episode_custom_position=st.session_state.get('episode_custom_position', 82.0),
         tts_volume=st.session_state.get('tts_volume', 1.0),
         original_volume=st.session_state.get('original_volume', 0.7),
         bgm_volume=st.session_state.get('bgm_volume', 0.3),
@@ -425,6 +423,10 @@ def main():
 
     # 放到最后渲染生成按钮和处理逻辑
     render_generate_button()
+
+    if st.session_state.pop('_auto_generate_video_after_script_save', False):
+        generate_video_from_current_settings()
+
     render_export_jianying_button()
 
 

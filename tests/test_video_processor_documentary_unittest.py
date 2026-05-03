@@ -1,4 +1,5 @@
 import os
+import subprocess
 import unittest
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -7,6 +8,33 @@ from app.utils.video_processor import VideoProcessor
 
 
 class VideoProcessorDocumentaryTests(unittest.TestCase):
+    def test_init_uses_format_duration_when_stream_duration_is_not_available(self):
+        stream_output = "\n".join(
+            [
+                "width=640",
+                "height=360",
+                "r_frame_rate=24/1",
+                "duration=N/A",
+            ]
+        )
+        stream_completed = subprocess.CompletedProcess(args=["ffprobe"], returncode=0, stdout=stream_output, stderr="")
+        format_completed = subprocess.CompletedProcess(
+            args=["ffprobe"], returncode=0, stdout="duration=9701.669000\n", stderr=""
+        )
+
+        with TemporaryDirectory() as temp_dir:
+            video_path = os.path.join(temp_dir, "demo.mkv")
+            with open(video_path, "wb") as video_file:
+                video_file.write(b"not a real video; ffprobe is mocked")
+
+            with patch("app.utils.video_processor.subprocess.run", side_effect=[stream_completed, format_completed]):
+                processor = VideoProcessor(video_path)
+
+        self.assertEqual(24.0, processor.fps)
+        self.assertEqual(9701.669, processor.duration)
+        self.assertEqual(640, processor.width)
+        self.assertEqual(360, processor.height)
+
     @patch.object(VideoProcessor, "_extract_frames_fast_path", return_value=["a.jpg"])
     def test_extract_frames_by_interval_prefers_fast_path(self, fast_path):
         processor = VideoProcessor.__new__(VideoProcessor)
