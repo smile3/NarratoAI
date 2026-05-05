@@ -90,7 +90,7 @@ JSON 必须包含以下键：
         )
         narration_items = self._parse_narration_items(narration_raw)
 
-        final_script = [{**item, "OST": 2} for item in narration_items]
+        final_script = self._rebalance_video_clip_json([{**item, "OST": 2} for item in narration_items])
         progress(100, "脚本生成完成")
         return final_script
 
@@ -171,6 +171,7 @@ JSON 必须包含以下键：
         video_clip_json = self._build_video_clip_json(sorted_batches)
 
         progress(75, "逐帧分析完成")
+        video_clip_json = self._rebalance_video_clip_json(video_clip_json)
         return {
             "analysis_json_path": analysis_json_path,
             "analysis_artifact": artifact,
@@ -538,6 +539,213 @@ JSON 必须包含以下键：
                 }
             )
         return clips
+
+    def _rebalance_video_clip_json(self, clips: list[dict]) -> list[dict]:
+        """Split long batch-based clips into variable source-time segments."""
+        if not clips:
+            return clips
+
+        flexible: list[dict] = []
+        for source_index, clip in enumerate(clips, 1):
+            if not isinstance(clip, dict):
+                continue
+            flexible.extend(self._split_clip_into_flexible_segments(clip, source_index))
+
+        if not flexible:
+            return clips
+
+        for index, clip in enumerate(flexible, 1):
+            clip["_id"] = index
+            clip.setdefault("OST", 2)
+            clip["duration"] = round(self._timestamp_duration_seconds(str(clip.get("timestamp", ""))), 3)
+        return flexible
+
+    def _split_clip_into_flexible_segments(self, clip: dict[str, Any], source_index: int) -> list[dict[str, Any]]:
+        timestamp = str(clip.get("timestamp", "") or "").strip()
+        start_seconds, end_seconds = self._timestamp_bounds_seconds(timestamp)
+        source_duration = max(0.0, end_seconds - start_seconds)
+        if source_duration <= 0:
+            source_duration = max(3.0, float(clip.get("duration", 0.0) or 0.0))
+            end_seconds = start_seconds + source_duration
+
+        narration = str(clip.get("narration", "") or "").strip()
+        picture = str(clip.get("picture", "") or "").strip()
+        chunks = self._split_narration_into_chunks(narration)
+        if not chunks:
+            chunks = [narration] if narration else [""]
+
+        desired_total = self._estimate_clip_duration_seconds(
+            narration=narration,
+            picture=picture,
+            original_duration=source_duration,
+            index=source_index,
+            total_count=0,
+        )
+        desired_total = min(source_duration, max(3.0 * len(chunks), desired_total))
+        durations = self._allocate_chunk_durations(chunks, desired_total, source_duration)
+
+        segments: list[dict[str, Any]] = []
+        cursor = start_seconds
+        for chunk_index, (chunk, duration) in enumerate(zip(chunks, durations), 1):
+            if duration <= 0:
+                continue
+            segment_start = cursor
+            segment_end = min(end_seconds, segment_start + duration)
+            if segment_end <= segment_start:
+                break
+            new_item = dict(clip)
+            new_item["timestamp"] = f"{self._format_seconds_timestamp(segment_start)}-{self._format_seconds_timestamp(segment_end)}"
+            new_item["duration"] = round(segment_end - segment_start, 3)
+            if chunk.strip():
+                new_item["narration"] = chunk.strip()
+            new_item["picture"] = self._segment_picture_text(picture, chunk_index, len(chunks))
+            segments.append(new_item)
+            cursor = segment_end
+            if cursor >= end_seconds:
+                break
+
+        return segments or [dict(clip)]
+
+    def _split_narration_into_chunks(self, narration: str) -> list[str]:
+        text = str(narration or "").strip()
+        if not text:
+            return []
+        if len(text) <= 30:
+            return [text]
+
+        parts = [part.strip() for part in re.findall(r"[^。！？!?；;，,]+[。！？!?；;，,]?", text) if part.strip()]
+        if not parts:
+            parts = [text[index : index + 24] for index in range(0, len(text), 24)]
+
+        chunks: list[str] = []
+        current = ""
+        target_chars = 24
+        for part in parts:
+            if current and len(current) + len(part) > target_chars and len(current) >= 10:
+                chunks.append(current.strip())
+                current = part
+            else:
+                current = f"{current}{part}"
+        if current.strip():
+            chunks.append(current.strip())
+
+        expanded: list[str] = []
+        for chunk in chunks:
+            if len(chunk) <= 36:
+                expanded.append(chunk)
+            else:
+                expanded.extend(chunk[index : index + 28].strip() for index in range(0, len(chunk), 28) if chunk[index : index + 28].strip())
+        return expanded or [text]
+
+    def _allocate_chunk_durations(self, chunks: list[str], desired_total: float, source_duration: float) -> list[float]:
+        if not chunks:
+            return []
+        if len(chunks) == 1:
+            return [round(min(source_duration, max(3.0, desired_total)), 3)]
+
+        weights = [max(0.8, len(chunk) / 12.0) for chunk in chunks]
+        weight_total = sum(weights) or 1.0
+        durations = [max(3.0, desired_total * weight / weight_total) for weight in weights]
+        duration_total = sum(durations)
+        if duration_total > source_duration:
+            scale = source_duration / duration_total
+            durations = [max(2.5, duration * scale) for duration in durations]
+        return [round(duration, 3) for duration in durations]
+
+    def _segment_picture_text(self, picture: str, chunk_index: int, chunk_count: int) -> str:
+        clean_picture = str(picture or "").strip()
+        if not clean_picture:
+            return "画面按剧情节奏推进"
+        if chunk_count <= 1:
+            return clean_picture
+        return f"{clean_picture}（细分镜头{chunk_index}）"
+
+    def _estimate_clip_duration_seconds(
+        self,
+        *,
+        narration: str,
+        picture: str,
+        original_duration: float,
+        index: int,
+        total_count: int,
+    ) -> float:
+        text_length = len((narration or "").strip())
+        picture_length = len((picture or "").strip())
+        anchor = original_duration if original_duration > 0 else 8.0
+
+        if text_length <= 0:
+            estimated = anchor * (0.55 if picture_length else 0.35)
+        elif text_length <= 6:
+            estimated = anchor * 0.25
+        elif text_length <= 18:
+            estimated = anchor * 0.72
+        elif text_length <= 36:
+            estimated = anchor * 0.82
+        elif text_length <= 60:
+            estimated = anchor * 0.92
+        else:
+            estimated = anchor
+
+        speech_floor = max(3.0, text_length * 0.28 + 1.2) if text_length else 3.0
+        estimated = max(estimated, speech_floor)
+
+        if index == 1:
+            estimated = max(estimated, min(anchor, 7.0))
+        elif index == 2:
+            estimated = max(estimated, min(anchor, 6.0))
+
+        if narration:
+            if any(keyword in narration for keyword in ["先别", "真相", "反转", "秘密", "危机", "抓刺客", "爆点", "悬念"]):
+                estimated *= 1.12
+            if any(keyword in narration for keyword in ["下一秒", "紧接着", "突然", "就在这时"]):
+                estimated *= 0.92
+            if text_length > 60:
+                estimated *= 1.05
+            elif text_length < 10:
+                estimated *= 0.88
+
+        if picture:
+            if any(keyword in picture for keyword in ["围住", "冲突", "秘密", "反转", "危机", "揭穿", "闯", "追"]):
+                estimated *= 1.06
+            elif any(keyword in picture for keyword in ["静止", "远景", "过渡", "空镜"]):
+                estimated *= 0.85
+
+        estimated = max(3.0, min(anchor, estimated))
+        return round(estimated, 3)
+
+    def _timestamp_bounds_seconds(self, timestamp: str) -> tuple[float, float]:
+        try:
+            start_text, end_text = str(timestamp or "").split("-", 1)
+            return self._timestamp_to_seconds(start_text), self._timestamp_to_seconds(end_text)
+        except Exception:
+            return 0.0, 0.0
+
+    def _timestamp_duration_seconds(self, timestamp: str) -> float:
+        start_seconds, end_seconds = self._timestamp_bounds_seconds(timestamp)
+        return max(0.0, end_seconds - start_seconds)
+
+    def _timestamp_to_seconds(self, timestamp: str) -> float:
+        text = str(timestamp or "").strip()
+        if not text:
+            return 0.0
+        if "," in text:
+            time_part, ms_part = text.split(",", 1)
+            milliseconds = int(ms_part)
+        else:
+            time_part = text
+            milliseconds = 0
+        parts = [int(part) for part in time_part.split(":") if part]
+        while len(parts) < 3:
+            parts.insert(0, 0)
+        hours, minutes, seconds = parts[-3], parts[-2], parts[-1]
+        return ((hours * 3600 + minutes * 60 + seconds) * 1000 + milliseconds) / 1000.0
+
+    def _format_seconds_timestamp(self, seconds: float) -> str:
+        total_ms = int(round(max(0.0, seconds) * 1000))
+        hours, remainder = divmod(total_ms, 3_600_000)
+        minutes, remainder = divmod(remainder, 60_000)
+        secs, millis = divmod(remainder, 1000)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
     def _build_batch_picture(self, batch: FrameBatchResult) -> str:
         summary = (batch.overall_activity_summary or "").strip()

@@ -97,6 +97,64 @@ class ScriptGeneratorDocumentaryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class DocumentaryFrameAnalysisServiceScriptGenerationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_generate_documentary_script_rebalances_uniform_batch_timestamps(self):
+        service = DocumentaryFrameAnalysisService()
+        analysis_payload = {
+            "batches": [
+                {
+                    "batch_index": 0,
+                    "time_range": "00:00:00,000-00:01:21,000",
+                    "overall_activity_summary": "主角陷入危机",
+                    "fallback_summary": "",
+                    "frame_observations": [
+                        {"timestamp": "00:00:00,000", "observation": "主角被围住"},
+                    ],
+                }
+            ]
+        }
+
+        with TemporaryDirectory() as temp_dir:
+            analysis_path = Path(temp_dir) / "frame_analysis_test.json"
+            analysis_path.write_text(json.dumps(analysis_payload, ensure_ascii=False), encoding="utf-8")
+
+            with patch.object(
+                DocumentaryFrameAnalysisService,
+                "analyze_video",
+                AsyncMock(return_value={"analysis_json_path": str(analysis_path)}),
+            ), patch.dict(
+                "app.services.documentary.frame_analysis_service.config.app",
+                {
+                    "text_llm_provider": "openai",
+                    "text_openai_api_key": "test-key",
+                    "text_openai_model_name": "test-model",
+                    "text_openai_base_url": "https://example.com/v1",
+                },
+            ), patch(
+                "app.services.documentary.frame_analysis_service.generate_narration",
+                return_value='{"items":[{"timestamp":"00:00:00,000-00:00:27,000","picture":"主角被围住","narration":"先别眨眼，麻烦已经堵到门口。"},{"timestamp":"00:00:27,000-00:00:54,000","picture":"秘密文件露出","narration":"她终于发现了最关键的秘密。"},{"timestamp":"00:00:54,000-00:01:21,000","picture":"反派突然出手","narration":"下一秒，局势彻底反转。"}]}',
+            ):
+                result = await service.generate_documentary_script(video_path="demo.mp4")
+
+        durations = []
+        for item in result:
+            start_text, end_text = item["timestamp"].split("-")
+            start_total = self._timestamp_to_seconds(start_text)
+            end_total = self._timestamp_to_seconds(end_text)
+            durations.append(round(end_total - start_total, 3))
+
+        self.assertGreater(len({round(duration, 2) for duration in durations}), 1)
+        self.assertLessEqual(sum(durations), 300.0)
+        self.assertGreater(sum(durations), 60.0)
+        for duration in durations:
+            self.assertGreater(duration, 0)
+            self.assertLessEqual(duration, 27.0)
+
+    @staticmethod
+    def _timestamp_to_seconds(timestamp: str) -> float:
+        time_part, ms_part = timestamp.split(",")
+        hours, minutes, seconds = map(int, time_part.split(":"))
+        return hours * 3600 + minutes * 60 + seconds + (int(ms_part) / 1000.0)
+
     async def test_generate_documentary_script_returns_final_narrated_items(self):
         service = DocumentaryFrameAnalysisService()
         analysis_payload = {

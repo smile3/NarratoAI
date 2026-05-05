@@ -545,6 +545,24 @@ def try_fallback_encoding(
     return execute_simple_command(fallback_cmd, timestamp, "通用Fallback")
 
 
+def _script_or_tts_duration(script_item: Dict, tts_item: Dict) -> float:
+    """Prefer an explicit script duration, falling back to generated TTS duration."""
+    try:
+        script_duration = float(script_item.get("duration", 0) or 0)
+    except (TypeError, ValueError):
+        script_duration = 0.0
+    try:
+        tts_duration = float(tts_item.get("duration", 0) or 0)
+    except (TypeError, ValueError):
+        tts_duration = 0.0
+
+    if script_duration > 0 and tts_duration > 0:
+        return max(script_duration, tts_duration)
+    if script_duration > 0:
+        return script_duration
+    return tts_duration
+
+
 def _process_narration_only_segment(
     video_origin_path: str,
     script_item: Dict,
@@ -569,7 +587,7 @@ def _process_narration_only_segment(
 
     # 解析起始时间，使用TTS音频时长计算结束时间
     start_time, _ = parse_timestamp(timestamp)
-    duration = tts_item["duration"]
+    duration = _script_or_tts_duration(script_item, tts_item)
     calculated_end_time = calculate_end_time(start_time, duration, extra_seconds=0)
 
     # 转换为FFmpeg兼容的时间格式
@@ -664,7 +682,7 @@ def _process_mixed_segment(
 
     # 解析起始时间，使用TTS音频时长计算结束时间
     start_time, _ = parse_timestamp(timestamp)
-    duration = tts_item["duration"]
+    duration = _script_or_tts_duration(script_item, tts_item)
     calculated_end_time = calculate_end_time(start_time, duration, extra_seconds=0)
 
     # 转换为FFmpeg兼容的时间格式

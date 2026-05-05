@@ -21,7 +21,7 @@ class AudioVolumeDefaults:
     TTS_VOLUME = 1.0
 
     # 原声音量默认值 - 提高原声音量以平衡TTS
-    ORIGINAL_VOLUME = 1.2
+    ORIGINAL_VOLUME = 0.3
 
     # 背景音乐音量默认值
     BGM_VOLUME = 0.3
