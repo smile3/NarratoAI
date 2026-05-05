@@ -13,6 +13,13 @@ class PromptDurationRuleTests(unittest.TestCase):
         self.assertIn("画面时长", template)
         self.assertIn("每秒", template)
 
+    def test_documentary_narration_prompt_requires_variable_story_based_timestamps(self):
+        template = NarrationGenerationPrompt().get_template()
+
+        self.assertIn("不要机械沿用固定批次", template)
+        self.assertIn("不同片段允许不同长度", template)
+        self.assertIn("根据剧情", template)
+
     def test_short_drama_editing_prompts_target_under_five_minutes(self):
         analysis_template = SubtitleAnalysisPrompt().get_template()
         extraction_template = PlotExtractionPrompt().get_template()

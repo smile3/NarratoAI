@@ -125,6 +125,22 @@
     "AI Polish Short Drama Script": "AI Polish Script (Short Drama Promo)",
     "Polishing Loaded Script": "Polishing script as short-drama promo...",
     "Loaded script polished successfully": "Script polished, title generated, and hook shot added",
-    "Failed to polish loaded script": "Failed to polish loaded script"
+    "Failed to polish loaded script": "Failed to polish loaded script",
+    "Frame Subtitle Generate": "Frame + Subtitle",
+    "Generate Frame Subtitle Script": "AI Generate Frame + Subtitle Script",
+    "Current Subtitle": "Current Subtitle",
+    "Generating Local Whisper Subtitles": "Generating subtitles with local Whisper...",
+    "Local Whisper subtitles generated": "Local Whisper subtitles generated",
+    "Failed to generate local subtitles": "Failed to generate local subtitles",
+    "Please select a video before generating subtitles": "Please select a video before generating subtitles",
+    "上传字幕文件": "Upload Subtitle File (local Whisper will be used if empty)",
+    "清除已上传字幕": "Clear Subtitle",
+    "字幕上传成功": "Subtitle uploaded successfully",
+    "无法读取字幕文件，请检查文件编码（支持 UTF-8、UTF-16、GBK、GB2312）": "Unable to read subtitle file. Please check encoding (UTF-8, UTF-16, GBK, GB2312 supported).",
+    "字幕文件内容似乎为空，请检查文件": "The subtitle file seems empty. Please check it.",
+    "短剧名称": "Short Drama Name",
+    "生成短剧解说脚本": "AI Generate Short Drama Narration Script",
+    "自定义片段": "Custom Clips",
+    "设置需要生成的短视频片段数量": "Set the number of short clips to generate"
   }
 }

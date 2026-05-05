@@ -189,6 +189,22 @@
     "AI Polish Short Drama Script": "AI二次加工脚本（短剧推广）",
     "Polishing Loaded Script": "正在按短剧推广方向二次加工脚本...",
     "Loaded script polished successfully": "脚本二次加工完成，已生成标题并加入开场核心镜头",
-    "Failed to polish loaded script": "二次加工脚本失败"
+    "Failed to polish loaded script": "二次加工脚本失败",
+    "Frame Subtitle Generate": "逐帧+字幕",
+    "Generate Frame Subtitle Script": "AI生成逐帧+字幕剪辑脚本",
+    "Current Subtitle": "当前字幕",
+    "Generating Local Whisper Subtitles": "正在使用本地 Whisper 生成字幕...",
+    "Local Whisper subtitles generated": "本地 Whisper 字幕生成成功",
+    "Failed to generate local subtitles": "本地字幕生成失败",
+    "Please select a video before generating subtitles": "请先选择视频文件，再生成字幕",
+    "上传字幕文件": "上传字幕文件（不上传则生成脚本时自动使用本地 Whisper）",
+    "清除已上传字幕": "清除已上传字幕",
+    "字幕上传成功": "字幕上传成功",
+    "无法读取字幕文件，请检查文件编码（支持 UTF-8、UTF-16、GBK、GB2312）": "无法读取字幕文件，请检查文件编码（支持 UTF-8、UTF-16、GBK、GB2312）",
+    "字幕文件内容似乎为空，请检查文件": "字幕文件内容似乎为空，请检查文件",
+    "短剧名称": "短剧名称",
+    "生成短剧解说脚本": "AI生成短剧解说脚本",
+    "自定义片段": "自定义片段",
+    "设置需要生成的短视频片段数量": "设置需要生成的短视频片段数量"
   }
 }

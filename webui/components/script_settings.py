@@ -8,12 +8,22 @@ from loguru import logger
 
 from app.config import config
 from app.models.schema import VideoClipParams
-from app.services import script_enhancement
+from app.services import local_whisper_subtitle, script_enhancement
 from app.services.subtitle_text import decode_subtitle_bytes
 from app.utils import utils, check_script
+from webui.tools.generate_frame_subtitle import generate_frame_subtitle_script_tool
 from webui.tools.generate_script_docu import generate_script_docu
 from webui.tools.generate_script_short import generate_script_short
 from webui.tools.generate_short_summary import generate_script_short_sunmmary
+
+
+MODE_FILE = "file_selection"
+MODE_AUTO = "auto"
+MODE_SHORT = "short"
+MODE_SUMMARY = "summary"
+MODE_FRAME_SUBTITLE = "frame_subtitle"
+GENERATED_SCRIPT_MODES = [MODE_AUTO, MODE_SHORT, MODE_SUMMARY, MODE_FRAME_SUBTITLE]
+SUBTITLE_REQUIRED_MODES = [MODE_SHORT, MODE_SUMMARY, MODE_FRAME_SUBTITLE]
 
 
 def render_script_panel(tr):
@@ -32,20 +42,23 @@ def render_script_panel(tr):
         script_path = st.session_state.get('video_clip_json_path', '')
 
         # 根据脚本类型显示不同的布局
-        if script_path == "auto":
+        if script_path == MODE_AUTO:
             # 画面解说
             render_video_details(tr)
-        elif script_path == "short":
+        elif script_path == MODE_SHORT:
             # 短剧混剪
             render_short_generate_options(tr)
-        elif script_path == "summary":
+        elif script_path == MODE_SUMMARY:
             # 短剧解说
             short_drama_summary(tr)
+        elif script_path == MODE_FRAME_SUBTITLE:
+            # 逐帧+字幕
+            render_frame_subtitle_options(tr)
         else:
             # 默认为空
             pass
 
-        if script_path != "auto":
+        if script_path != MODE_AUTO:
             render_script_title_display(tr)
 
         # 渲染脚本操作按钮
@@ -54,12 +67,7 @@ def render_script_panel(tr):
 
 def render_script_file(tr, params):
     """渲染脚本文件选择"""
-    # 定义功能模式
-    MODE_FILE = "file_selection"
-    MODE_AUTO = "auto"
-    MODE_SHORT = "short"
-    MODE_SUMMARY = "summary"
-
+    # 功能模式常量定义在模块顶部，方便生成流程共用。
     # 处理保存脚本后的模式切换（必须在 widget 实例化之前）
     if st.session_state.get('_switch_to_file_mode'):
         st.session_state['script_mode_selection'] = tr("Select/Upload Script")
@@ -71,6 +79,7 @@ def render_script_file(tr, params):
         tr("Auto Generate"): MODE_AUTO,
         tr("Short Generate"): MODE_SHORT,
         tr("Short Drama Summary"): MODE_SUMMARY,
+        tr("Frame Subtitle Generate"): MODE_FRAME_SUBTITLE,
     }
     
     # 获取当前状态
@@ -80,12 +89,14 @@ def render_script_file(tr, params):
     default_index = 0
     mode_keys = list(mode_options.keys())
     
-    if current_path == "auto":
+    if current_path == MODE_AUTO:
         default_index = mode_keys.index(tr("Auto Generate"))
-    elif current_path == "short":
+    elif current_path == MODE_SHORT:
         default_index = mode_keys.index(tr("Short Generate"))
-    elif current_path == "summary":
+    elif current_path == MODE_SUMMARY:
         default_index = mode_keys.index(tr("Short Drama Summary"))
+    elif current_path == MODE_FRAME_SUBTITLE:
+        default_index = mode_keys.index(tr("Frame Subtitle Generate"))
     else:
         default_index = mode_keys.index(tr("Select/Upload Script"))
 
@@ -149,8 +160,8 @@ def render_script_file(tr, params):
             script_list.append((display_name, file['file']))
 
         # 找到保存的脚本文件在列表中的索引
-        # 如果当前path是特殊值(auto/short/summary)，则重置为空
-        saved_script_path = current_path if current_path not in [MODE_AUTO, MODE_SHORT, MODE_SUMMARY] else ""
+        # 如果当前path是特殊生成模式，则重置为空
+        saved_script_path = current_path if current_path not in GENERATED_SCRIPT_MODES else ""
         
         selected_index = 0
         for i, (_, path) in enumerate(script_list):
@@ -282,6 +293,12 @@ def render_video_file(tr, params):
                 st.rerun()
 
 
+def render_frame_subtitle_options(tr):
+    """渲染逐帧+字幕模式选项。"""
+    render_subtitle_upload(tr)
+    render_video_details(tr)
+
+
 def render_short_generate_options(tr):
     """
     渲染Short Generate模式下的特殊选项
@@ -376,174 +393,107 @@ def render_script_title_display(tr):
         st.text_input(tr("Script Title"), value=script_title, disabled=True)
 
 
-def short_drama_summary(tr):
-    """短剧解说 渲染视频主题和提示词"""
-    # 检查是否已经处理过字幕文件
+def render_subtitle_upload(tr):
+    """渲染字幕上传入口；没有上传时生成按钮会自动使用本地 Whisper。"""
     if 'subtitle_file_processed' not in st.session_state:
         st.session_state['subtitle_file_processed'] = False
 
-    render_fun_asr_transcription(tr)
-    
     subtitle_file = st.file_uploader(
         tr("上传字幕文件"),
         type=["srt"],
         accept_multiple_files=False,
-        key="subtitle_file_uploader"  # 添加唯一key
+        key="subtitle_file_uploader"
     )
-    
-    # 显示当前已上传的字幕文件路径
-    if 'subtitle_path' in st.session_state and st.session_state['subtitle_path']:
-        st.info(f"已上传字幕: {os.path.basename(st.session_state['subtitle_path'])}")
+
+    if st.session_state.get('subtitle_path'):
+        st.info(f"{tr('Current Subtitle')}: {os.path.basename(st.session_state['subtitle_path'])}")
         if st.button(tr("清除已上传字幕")):
             st.session_state['subtitle_path'] = None
             st.session_state['subtitle_content'] = None
             st.session_state['subtitle_file_processed'] = False
             st.rerun()
-    
-    # 只有当有文件上传且尚未处理时才执行处理逻辑
-    if subtitle_file is not None and not st.session_state['subtitle_file_processed']:
-        try:
-            # 清理文件名，防止路径污染和路径遍历攻击
-            safe_filename = os.path.basename(subtitle_file.name)
 
-            decoded = decode_subtitle_bytes(subtitle_file.getvalue())
-            script_content = decoded.text
-            detected_encoding = decoded.encoding
+    if subtitle_file is None or st.session_state['subtitle_file_processed']:
+        return
 
-            if not script_content:
-                st.error(tr("无法读取字幕文件，请检查文件编码（支持 UTF-8、UTF-16、GBK、GB2312）"))
-                st.stop()
+    try:
+        safe_filename = os.path.basename(subtitle_file.name)
+        decoded = decode_subtitle_bytes(subtitle_file.getvalue())
+        script_content = decoded.text
+        detected_encoding = decoded.encoding
 
-            # 验证字幕内容（简单检查）
-            if len(script_content.strip()) < 10:
-                st.warning(tr("字幕文件内容似乎为空，请检查文件"))
+        if not script_content:
+            st.error(tr("无法读取字幕文件，请检查文件编码（支持 UTF-8、UTF-16、GBK、GB2312）"))
+            st.stop()
 
-            # 保存到字幕目录
-            script_file_path = os.path.join(utils.subtitle_dir(), safe_filename)
-            file_name, file_extension = os.path.splitext(safe_filename)
+        if len(script_content.strip()) < 10:
+            st.warning(tr("字幕文件内容似乎为空，请检查文件"))
 
-            # 如果文件已存在,添加时间戳
-            if os.path.exists(script_file_path):
-                timestamp = time.strftime("%Y%m%d%H%M%S")
-                file_name_with_timestamp = f"{file_name}_{timestamp}"
-                script_file_path = os.path.join(utils.subtitle_dir(), file_name_with_timestamp + file_extension)
+        script_file_path = os.path.join(utils.subtitle_dir(), safe_filename)
+        file_name, file_extension = os.path.splitext(safe_filename)
+        if os.path.exists(script_file_path):
+            timestamp = time.strftime("%Y%m%d%H%M%S")
+            script_file_path = os.path.join(utils.subtitle_dir(), f"{file_name}_{timestamp}{file_extension}")
 
-            # 直接写入SRT内容（统一使用 UTF-8）
-            with open(script_file_path, "w", encoding='utf-8') as f:
-                f.write(script_content)
+        with open(script_file_path, "w", encoding='utf-8') as f:
+            f.write(script_content)
 
-            # 更新状态
-            st.success(
-                f"{tr('字幕上传成功')} "
-                f"(编码: {detected_encoding.upper()}, "
-                f"大小: {len(script_content)} 字符)"
-            )
-            st.session_state['subtitle_path'] = script_file_path
-            st.session_state['subtitle_content'] = script_content
-            st.session_state['subtitle_file_processed'] = True  # 标记已处理
+        st.success(
+            f"{tr('字幕上传成功')} "
+            f"(编码: {detected_encoding.upper()}, "
+            f"大小: {len(script_content)} 字符)"
+        )
+        st.session_state['subtitle_path'] = script_file_path
+        st.session_state['subtitle_content'] = script_content
+        st.session_state['subtitle_file_processed'] = True
 
-            # 避免使用rerun，使用更新状态的方式
-            # st.rerun()
+    except Exception as e:
+        st.error(f"{tr('Upload failed')}: {str(e)}")
 
-        except Exception as e:
-            st.error(f"{tr('Upload failed')}: {str(e)}")
 
-    # 名称输入框
+def short_drama_summary(tr):
+    """短剧解说 渲染字幕、短剧名称和温度。"""
+    render_subtitle_upload(tr)
+
     video_theme = st.text_input(tr("短剧名称"))
     st.session_state['video_theme'] = video_theme
-    # 数字输入框
     temperature = st.slider("temperature", 0.0, 2.0, 0.7)
     st.session_state['temperature'] = temperature
     return video_theme
 
 
-def render_fun_asr_transcription(tr):
-    """使用阿里百炼 Fun-ASR 从本地音视频转写生成字幕。"""
-    def clear_fun_asr_subtitle_state():
-        st.session_state['subtitle_path'] = None
-        st.session_state['subtitle_content'] = None
-        st.session_state['subtitle_file_processed'] = False
+def ensure_subtitle_for_current_video(tr, params=None):
+    """Return an existing subtitle path or generate one from the current video with local Whisper."""
+    subtitle_path = st.session_state.get('subtitle_path')
+    if subtitle_path and os.path.exists(str(subtitle_path)):
+        if not st.session_state.get('subtitle_content'):
+            with open(subtitle_path, "r", encoding="utf-8") as handle:
+                st.session_state['subtitle_content'] = handle.read()
+        st.session_state['subtitle_file_processed'] = True
+        return subtitle_path
 
-    with st.expander("阿里百炼 Fun-ASR 字幕转录", expanded=False):
-        st.caption("上传本地音频/视频后，将自动上传到阿里百炼临时存储并通过 fun-asr 生成 SRT 字幕。")
-        st.markdown(
-            "API Key 获取地址："
-            "[https://bailian.console.aliyun.com/?tab=model#/api-key]"
-            "(https://bailian.console.aliyun.com/?tab=model#/api-key)"
-        )
+    video_path = getattr(params, "video_origin_path", None) if params is not None else None
+    video_path = video_path or st.session_state.get('video_origin_path')
+    if not video_path or video_path == "upload_local" or not os.path.exists(str(video_path)):
+        st.error(tr("Please select a video before generating subtitles"))
+        return ""
 
-        api_key = st.text_input(
-            "阿里百炼 API Key",
-            value=config.fun_asr.get("api_key", ""),
-            type="password",
-            help="请输入你自己的阿里百炼 API Key；保存配置后会写入本地 config.toml",
-            key="fun_asr_api_key",
-        )
-        uploaded_media = st.file_uploader(
-            "上传需要转录的音频/视频",
-            type=[
-                "aac", "amr", "avi", "flac", "flv", "m4a", "mkv", "mov",
-                "mp3", "mp4", "mpeg", "ogg", "opus", "wav", "webm", "wma", "wmv",
-            ],
-            accept_multiple_files=False,
-            key="fun_asr_media_uploader",
-        )
+    try:
+        output_path = local_whisper_subtitle.default_subtitle_path_for_media(str(video_path))
+        with st.spinner(tr("Generating Local Whisper Subtitles")):
+            generated_path = local_whisper_subtitle.create_with_local_whisper(str(video_path), output_path)
+        with open(generated_path, "r", encoding="utf-8") as handle:
+            subtitle_content = handle.read()
+        st.session_state['subtitle_path'] = generated_path
+        st.session_state['subtitle_content'] = subtitle_content
+        st.session_state['subtitle_file_processed'] = True
+        st.success(f"{tr('Local Whisper subtitles generated')}: {os.path.basename(generated_path)}")
+        return generated_path
+    except Exception as err:
+        logger.error(f"本地 Whisper 字幕生成失败: {traceback.format_exc()}")
+        st.error(f"{tr('Failed to generate local subtitles')}: {str(err)}")
+        return ""
 
-        if st.button("转写生成字幕", key="fun_asr_transcribe"):
-            if not api_key.strip():
-                clear_fun_asr_subtitle_state()
-                st.error("请先输入阿里百炼 API Key")
-                return
-            if uploaded_media is None:
-                clear_fun_asr_subtitle_state()
-                st.error("请先上传需要转录的音频或视频文件")
-                return
-
-            try:
-                clear_fun_asr_subtitle_state()
-                from app.services import fun_asr_subtitle
-
-                config.fun_asr["api_key"] = api_key.strip()
-                config.fun_asr["model"] = "fun-asr"
-                config.save_config()
-
-                temp_dir = utils.temp_dir("fun_asr")
-                safe_filename = os.path.basename(uploaded_media.name)
-                media_path = os.path.join(temp_dir, safe_filename)
-                file_name, file_extension = os.path.splitext(safe_filename)
-                if os.path.exists(media_path):
-                    timestamp = time.strftime("%Y%m%d%H%M%S")
-                    media_path = os.path.join(temp_dir, f"{file_name}_{timestamp}{file_extension}")
-
-                with open(media_path, "wb") as f:
-                    f.write(uploaded_media.getbuffer())
-
-                subtitle_name = f"{os.path.splitext(os.path.basename(media_path))[0]}_fun_asr.srt"
-                subtitle_path = os.path.join(utils.subtitle_dir(), subtitle_name)
-
-                with st.spinner("正在使用阿里百炼 Fun-ASR 转写字幕，请稍候..."):
-                    generated_path = fun_asr_subtitle.create_with_fun_asr(
-                        local_file=media_path,
-                        subtitle_file=subtitle_path,
-                        api_key=api_key.strip(),
-                    )
-
-                if not generated_path or not os.path.exists(generated_path):
-                    clear_fun_asr_subtitle_state()
-                    st.error("Fun-ASR 转写失败：未生成字幕文件")
-                    return
-
-                with open(generated_path, "r", encoding="utf-8") as f:
-                    subtitle_content = f.read()
-
-                st.session_state['subtitle_path'] = generated_path
-                st.session_state['subtitle_content'] = subtitle_content
-                st.session_state['subtitle_file_processed'] = True
-                st.success(f"字幕转写成功: {os.path.basename(generated_path)}")
-            except Exception as e:
-                clear_fun_asr_subtitle_state()
-                logger.error(f"Fun-ASR 字幕转写失败: {traceback.format_exc()}")
-                st.error(f"Fun-ASR 字幕转写失败: {str(e)}")
 
 
 def render_script_buttons(tr, params):
@@ -552,18 +502,20 @@ def render_script_buttons(tr, params):
     script_path = st.session_state.get('video_clip_json_path', '')
 
     # 生成/加载按钮
-    if script_path == "auto":
+    if script_path == MODE_AUTO:
         button_name = tr("Generate Video Script")
-    elif script_path == "short":
+    elif script_path == MODE_SHORT:
         button_name = tr("Generate Short Video Script")
-    elif script_path == "summary":
+    elif script_path == MODE_SUMMARY:
         button_name = tr("生成短剧解说脚本")
+    elif script_path == MODE_FRAME_SUBTITLE:
+        button_name = tr("Generate Frame Subtitle Script")
     elif script_path.endswith("json"):
         button_name = tr("Load Video Script")
     else:
         button_name = tr("Please Select Script File")
 
-    if script_path in ["auto", "short", "summary"]:
+    if script_path in GENERATED_SCRIPT_MODES:
         st.checkbox(
             tr("Enable Script Polishing"),
             value=st.session_state.get('enable_script_polishing', False),
@@ -571,7 +523,7 @@ def render_script_buttons(tr, params):
             help=tr("Polish generated narration without changing timestamps"),
         )
 
-    if script_path == "auto":
+    if script_path == MODE_AUTO:
         action_cols = st.columns(2)
         with action_cols[0]:
             if st.button(button_name, key="script_action", disabled=not script_path, use_container_width=True):
@@ -608,12 +560,12 @@ def render_script_buttons(tr, params):
 
 def is_file_script_mode(script_path: str) -> bool:
     """判断当前是否为选择/上传脚本模式下的真实脚本文件。"""
-    return bool(script_path) and script_path not in ["auto", "short", "summary", "upload_script"]
+    return bool(script_path) and script_path not in [*GENERATED_SCRIPT_MODES, "upload_script"]
 
 
 def run_script_action(tr, params, script_path):
     """执行当前脚本动作，并在需要时进行二次加工。"""
-    if script_path == "auto":
+    if script_path == MODE_AUTO:
         success = generate_script_docu(params)
         if not success:
             return False
@@ -622,16 +574,31 @@ def run_script_action(tr, params, script_path):
         if not maybe_generate_script_title_after_generation(tr):
             return False
         return bool(st.session_state.get('video_clip_json'))
-    elif script_path == "short":
+    elif script_path == MODE_SHORT:
+        if not ensure_subtitle_for_current_video(tr, params):
+            return False
         custom_clips = st.session_state.get('custom_clips')
         success = generate_script_short(tr, params, custom_clips)
         return bool(success and maybe_polish_generated_script(tr) and st.session_state.get('video_clip_json'))
-    elif script_path == "summary":
-        subtitle_path = st.session_state.get('subtitle_path')
+    elif script_path == MODE_SUMMARY:
+        subtitle_path = ensure_subtitle_for_current_video(tr, params)
+        if not subtitle_path:
+            return False
         video_theme = st.session_state.get('video_theme')
         temperature = st.session_state.get('temperature')
         success = generate_script_short_sunmmary(params, subtitle_path, video_theme, temperature)
         return bool(success and maybe_polish_generated_script(tr) and st.session_state.get('video_clip_json'))
+    elif script_path == MODE_FRAME_SUBTITLE:
+        if not ensure_subtitle_for_current_video(tr, params):
+            return False
+        success = generate_frame_subtitle_script_tool(params)
+        if not success:
+            return False
+        if not maybe_polish_generated_script(tr):
+            return False
+        if st.session_state.get('auto_generate_script_title', True) and not maybe_generate_script_title_after_generation(tr):
+            return False
+        return bool(st.session_state.get('video_clip_json'))
     else:
         load_script(tr, script_path)
         return False
