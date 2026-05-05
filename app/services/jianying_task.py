@@ -1,4 +1,3 @@
-import json
 import os
 import subprocess
 import time
@@ -10,7 +9,7 @@ from app.models import const
 from app.models.schema import VideoClipParams
 from app.services import voice, clip_video, update_script
 from app.services import state as sm
-from app.utils import utils
+from app.utils import script_document, utils
 
 
 def get_audio_duration_ffprobe(audio_file: str) -> float:
@@ -62,16 +61,19 @@ def start_export_jianying_draft(task_id: str, params: VideoClipParams):
     
     if path.exists(video_script_path):
         try:
-            with open(video_script_path, "r", encoding="utf-8") as f:
-                list_script = json.load(f)
-                video_list = [i['narration'] for i in list_script]
-                video_ost = [i['OST'] for i in list_script]
-                time_list = [i['timestamp'] for i in list_script]
+            document = script_document.load_script_document(video_script_path)
+            list_script = document.items
+            if document.script_title and not params.script_title:
+                params.script_title = document.script_title
+            video_list = [i['narration'] for i in list_script]
+            video_ost = [i['OST'] for i in list_script]
+            time_list = [i['timestamp'] for i in list_script]
 
-                video_script = " ".join(video_list)
-                logger.debug(f"解说完整脚本: \n{video_script}")
-                logger.debug(f"解说 OST 列表: \n{video_ost}")
-                logger.debug(f"解说时间戳列表: \n{time_list}")
+            video_script = " ".join(video_list)
+            logger.debug(f"解说完整脚本: \n{video_script}")
+            logger.debug(f"解说 OST 列表: \n{video_ost}")
+            logger.debug(f"解说时间戳列表: \n{time_list}")
+            logger.debug(f"脚本标题: {params.script_title}")
         except Exception as e:
             logger.error(f"无法读取视频json脚本，请检查脚本格式是否正确")
             raise ValueError("无法读取视频json脚本，请检查脚本格式是否正确")

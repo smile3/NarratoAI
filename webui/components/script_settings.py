@@ -10,7 +10,7 @@ from app.config import config
 from app.models.schema import VideoClipParams
 from app.services import local_whisper_subtitle, script_enhancement
 from app.services.subtitle_text import decode_subtitle_bytes
-from app.utils import utils, check_script
+from app.utils import utils, check_script, script_document
 from webui.tools.generate_frame_subtitle import generate_frame_subtitle_script_tool
 from webui.tools.generate_script_docu import generate_script_docu
 from webui.tools.generate_script_short import generate_script_short
@@ -201,9 +201,11 @@ def render_script_file(tr, params):
 
             if uploaded_file is not None:
                 try:
-                    # 读取上传的JSON内容并验证格式
+                    # 读取上传的JSON内容并兼容旧数组脚本/新标题脚本文档
                     script_content = uploaded_file.read().decode('utf-8')
                     json_data = json.loads(script_content)
+                    document = script_document.normalize_script_payload(json_data)
+                    json_data = script_document.build_script_document(document.items, document.script_title)
 
                     # 保存到脚本目录
                     safe_filename = os.path.basename(uploaded_file.name)
@@ -223,6 +225,8 @@ def render_script_file(tr, params):
                     # 更新状态
                     st.success(tr("Script Uploaded Successfully"))
                     st.session_state['video_clip_json_path'] = script_file_path
+                    st.session_state['video_clip_json'] = document.items
+                    st.session_state['script_title'] = document.script_title
                     params.video_clip_json_path = script_file_path
                     time.sleep(1)
                     st.rerun()
@@ -545,7 +549,7 @@ def render_script_buttons(tr, params):
     # 视频脚本编辑区
     video_clip_json_details = st.text_area(
         tr("Video Script"),
-        value=json.dumps(st.session_state.get('video_clip_json', []), indent=2, ensure_ascii=False),
+        value=format_script_editor_value(),
         height=500
     )
 
@@ -556,6 +560,15 @@ def render_script_buttons(tr, params):
     # 操作按钮行 - 合并格式检查和保存功能
     if st.button(tr("Save Script"), key="save_script", use_container_width=True):
         save_script_with_validation(tr, video_clip_json_details)
+
+
+def format_script_editor_value():
+    """Format current script for editing, including the persisted title when present."""
+    script_items = st.session_state.get('video_clip_json', [])
+    script_title = st.session_state.get('script_title', '')
+    if script_title:
+        return script_document.dumps_script_document(script_items, script_title, indent=2)
+    return json.dumps(script_items, indent=2, ensure_ascii=False)
 
 
 def is_file_script_mode(script_path: str) -> bool:
@@ -645,7 +658,10 @@ def polish_loaded_script_as_short_drama(tr, video_clip_json_details):
         return False
 
     try:
-        script_items = json.loads(script_content)
+        document = script_document.loads_script_document(script_content)
+        script_items = document.items
+        if document.script_title:
+            st.session_state['script_title'] = document.script_title
         with st.spinner(tr("Polishing Loaded Script")):
             polished = script_enhancement.optimize_script_narrations(
                 script_items,
@@ -714,7 +730,11 @@ def save_current_script_and_schedule_video(tr):
         st.error(tr("Please generate or load a script first"))
         return
 
-    script_content = json.dumps(script_items, ensure_ascii=False, indent=2)
+    script_content = script_document.dumps_script_document(
+        script_items,
+        st.session_state.get('script_title', ''),
+        indent=2,
+    )
     save_path = save_script_with_validation(tr, script_content, rerun=False)
     if save_path:
         st.session_state['_auto_generate_video_after_script_save'] = True
@@ -730,7 +750,9 @@ def load_script(tr, script_path):
         with open(script_path, 'r', encoding='utf-8') as f:
             script = f.read()
             script = utils.clean_model_output(script)
-            st.session_state['video_clip_json'] = json.loads(script)
+            document = script_document.loads_script_document(script)
+            st.session_state['video_clip_json'] = document.items
+            st.session_state['script_title'] = document.script_title
             st.success(tr("Script loaded successfully"))
             st.rerun()
     except Exception as e:
@@ -790,10 +812,13 @@ def save_script_with_validation(tr, video_clip_json_details, *, rerun=True):
         save_path = os.path.join(script_dir, f"{timestamp}.json")
 
         try:
-            data = json.loads(video_clip_json_details)
+            document = script_document.loads_script_document(video_clip_json_details)
+            script_title = document.script_title or st.session_state.get('script_title', '')
+            data = script_document.build_script_document(document.items, script_title)
             with open(save_path, 'w', encoding='utf-8') as file:
                 json.dump(data, file, ensure_ascii=False, indent=4)
-                st.session_state['video_clip_json'] = data
+                st.session_state['video_clip_json'] = document.items
+                st.session_state['script_title'] = script_title
                 st.session_state['video_clip_json_path'] = save_path
                 
                 # 标记需要切换到文件选择模式（在下次渲染前处理）
@@ -819,11 +844,19 @@ def save_script_with_validation(tr, video_clip_json_details, *, rerun=True):
 
 def get_script_params():
     """获取脚本参数"""
+    script_path = st.session_state.get('video_clip_json_path', '')
+    script_title = st.session_state.get('script_title', '')
+    if not script_title and script_path and script_path.endswith('.json') and os.path.exists(script_path):
+        try:
+            script_title = script_document.load_script_document(script_path).script_title
+            st.session_state['script_title'] = script_title
+        except Exception:
+            logger.warning(f"读取脚本标题失败: {script_path}")
     return {
         'video_language': st.session_state.get('video_language', ''),
-        'video_clip_json_path': st.session_state.get('video_clip_json_path', ''),
+        'video_clip_json_path': script_path,
         'video_origin_path': st.session_state.get('video_origin_path', ''),
         'video_name': st.session_state.get('video_name', ''),
         'video_plot': st.session_state.get('video_plot', ''),
-        'script_title': st.session_state.get('script_title', ''),
+        'script_title': script_title,
     }

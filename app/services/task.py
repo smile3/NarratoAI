@@ -1,5 +1,4 @@
 import math
-import json
 import os.path
 import re
 import traceback
@@ -12,7 +11,7 @@ from app.models import const
 from app.models.schema import VideoClipParams
 from app.services import (voice, audio_merger, subtitle_merger, clip_video, merger_video, update_script, generate_video)
 from app.services import state as sm
-from app.utils import utils
+from app.utils import script_document, utils
 
 
 def start_subclip(task_id: str, params: VideoClipParams, subclip_path_videos: dict = None):
@@ -42,16 +41,19 @@ def start_subclip(task_id: str, params: VideoClipParams, subclip_path_videos: di
     
     if path.exists(video_script_path):
         try:
-            with open(video_script_path, "r", encoding="utf-8") as f:
-                list_script = json.load(f)
-                video_list = [i['narration'] for i in list_script]
-                video_ost = [i['OST'] for i in list_script]
-                time_list = [i['timestamp'] for i in list_script]
+            document = script_document.load_script_document(video_script_path)
+            list_script = document.items
+            if document.script_title and not params.script_title:
+                params.script_title = document.script_title
+            video_list = [i['narration'] for i in list_script]
+            video_ost = [i['OST'] for i in list_script]
+            time_list = [i['timestamp'] for i in list_script]
 
-                video_script = " ".join(video_list)
-                logger.debug(f"解说完整脚本: \n{video_script}")
-                logger.debug(f"解说 OST 列表: \n{video_ost}")
-                logger.debug(f"解说时间戳列表: \n{time_list}")
+            video_script = " ".join(video_list)
+            logger.debug(f"解说完整脚本: \n{video_script}")
+            logger.debug(f"解说 OST 列表: \n{video_ost}")
+            logger.debug(f"解说时间戳列表: \n{time_list}")
+            logger.debug(f"脚本标题: {params.script_title}")
         except Exception as e:
             logger.error(f"无法读取视频json脚本，请检查脚本格式是否正确")
             raise ValueError("无法读取视频json脚本，请检查脚本格式是否正确")
@@ -237,6 +239,8 @@ def start_subclip(task_id: str, params: VideoClipParams, subclip_path_videos: di
         'subtitle_font_size': params.font_size,
         'subtitle_color': params.text_fore_color,
         'subtitle_bg_color': None,  # 直接使用None表示透明背景
+        'stroke_color': params.stroke_color,
+        'stroke_width': params.stroke_width,
         'subtitle_position': params.subtitle_position,
         'custom_position': params.custom_position,
         'script_title': params.script_title,
@@ -293,16 +297,19 @@ def start_subclip_unified(task_id: str, params: VideoClipParams):
 
     if path.exists(video_script_path):
         try:
-            with open(video_script_path, "r", encoding="utf-8") as f:
-                list_script = json.load(f)
-                video_list = [i['narration'] for i in list_script]
-                video_ost = [i['OST'] for i in list_script]
-                time_list = [i['timestamp'] for i in list_script]
+            document = script_document.load_script_document(video_script_path)
+            list_script = document.items
+            if document.script_title and not params.script_title:
+                params.script_title = document.script_title
+            video_list = [i['narration'] for i in list_script]
+            video_ost = [i['OST'] for i in list_script]
+            time_list = [i['timestamp'] for i in list_script]
 
-                video_script = " ".join(video_list)
-                logger.debug(f"解说完整脚本: \n{video_script}")
-                logger.debug(f"解说 OST 列表: \n{video_ost}")
-                logger.debug(f"解说时间戳列表: \n{time_list}")
+            video_script = " ".join(video_list)
+            logger.debug(f"解说完整脚本: \n{video_script}")
+            logger.debug(f"解说 OST 列表: \n{video_ost}")
+            logger.debug(f"解说时间戳列表: \n{time_list}")
+            logger.debug(f"脚本标题: {params.script_title}")
         except Exception as e:
             logger.error(f"无法读取视频json脚本，请检查脚本格式是否正确")
             raise ValueError("无法读取视频json脚本，请检查脚本格式是否正确")
@@ -457,6 +464,8 @@ def start_subclip_unified(task_id: str, params: VideoClipParams):
         'subtitle_font_size': params.font_size,
         'subtitle_color': params.text_fore_color,
         'subtitle_bg_color': None,
+        'stroke_color': params.stroke_color,
+        'stroke_width': params.stroke_width,
         'subtitle_position': params.subtitle_position,
         'custom_position': params.custom_position,
         'script_title': params.script_title,

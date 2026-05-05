@@ -27,7 +27,11 @@ from PIL import ImageFont
 from app.utils import utils
 from app.models.schema import AudioVolumeDefaults
 from app.services.audio_normalizer import AudioNormalizer, normalize_audio_for_mixing
-from app.services.video_overlay import resolve_fixed_text_overlay_position, resolve_subtitle_position
+from app.services.video_overlay import (
+    resolve_fixed_text_font_sizes,
+    resolve_fixed_text_overlay_position,
+    resolve_subtitle_position,
+)
 
 
 def is_valid_subtitle_file(subtitle_path: str) -> bool:
@@ -92,7 +96,7 @@ def merge_materials(
             - subtitle_bg_color: 字幕背景颜色，默认透明
             - subtitle_position: 字幕位置，可选值'bottom', 'top', 'center'，默认'bottom'
             - custom_position: 自定义位置
-            - stroke_color: 描边颜色，默认黑色
+            - stroke_color: 描边颜色，默认白色
             - stroke_width: 描边宽度，默认1
             - threads: 处理线程数，默认2
             - fps: 输出帧率，默认30
@@ -121,7 +125,7 @@ def merge_materials(
     subtitle_bg_color = options.get('subtitle_bg_color', 'transparent')
     subtitle_position = options.get('subtitle_position', 'bottom')
     custom_position = options.get('custom_position', 70)
-    stroke_color = options.get('stroke_color', '#000000')
+    stroke_color = options.get('stroke_color', '#FFFFFF')
     stroke_width = options.get('stroke_width', 1)
     threads = options.get('threads', 2)
     fps = options.get('fps', 30)
@@ -532,8 +536,7 @@ def create_fixed_text_overlays(
     title_position_resolved = None
     title_clip_size = None
 
-    title_font_size = max(int(font_size * 1.05), int(font_size) + 4)
-    episode_font_size = max(int(font_size * 0.72), 28)
+    title_font_size, episode_font_size = resolve_fixed_text_font_sizes(font_size)
 
     if title_text:
         wrapped_title, _height = wrap_text(

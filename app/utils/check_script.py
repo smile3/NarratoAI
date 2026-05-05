@@ -2,6 +2,8 @@ import json
 import re
 from typing import Dict, Any
 
+from app.utils.script_document import ScriptDocumentError, loads_script_document
+
 def check_format(script_content: str) -> Dict[str, Any]:
     """检查脚本格式
     Args:
@@ -10,16 +12,9 @@ def check_format(script_content: str) -> Dict[str, Any]:
         Dict: {'success': bool, 'message': str, 'details': str}
     """
     try:
-        # 检查是否为有效的JSON
-        data = json.loads(script_content)
-
-        # 检查是否为列表
-        if not isinstance(data, list):
-            return {
-                'success': False,
-                'message': '脚本必须是JSON数组格式',
-                'details': '正确格式应该是: [{"_id": 1, "timestamp": "...", ...}, ...]'
-            }
+        # 检查是否为有效的JSON，并兼容旧数组脚本与新标题脚本文档。
+        document = loads_script_document(script_content)
+        data = document.items
 
         # 检查数组不能为空
         if len(data) == 0:
@@ -96,6 +91,12 @@ def check_format(script_content: str) -> Dict[str, Any]:
             'details': f'共验证 {len(data)} 个脚本片段，格式正确'
         }
 
+    except ScriptDocumentError as e:
+        return {
+            'success': False,
+            'message': str(e),
+            'details': '正确格式可以是旧版数组，或新版对象: {"script_title": "标题", "items": [{"_id": 1, "timestamp": "...", ...}]}'
+        }
     except json.JSONDecodeError as e:
         return {
             'success': False,

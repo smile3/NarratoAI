@@ -196,7 +196,7 @@ def render_style_settings(tr):
     with stroke_cols[0]:
         stroke_color = st.color_picker(
             tr("Stroke Color"),
-            value="#000000"
+            value=st.session_state.get('stroke_color', '#FFFFFF')
         )
         st.session_state['stroke_color'] = stroke_color
 
@@ -226,6 +226,6 @@ def get_subtitle_params():
         'episode_name': st.session_state.get('episode_name', '上集'),
         'episode_position': st.session_state.get('episode_position', 'bottom'),
         'episode_custom_position': st.session_state.get('episode_custom_position', 82.0),
-        'stroke_color': st.session_state.get('stroke_color', '#000000'),
+        'stroke_color': st.session_state.get('stroke_color', '#FFFFFF'),
         'stroke_width': st.session_state.get('stroke_width', 1.5),
     }

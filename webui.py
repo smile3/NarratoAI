@@ -244,6 +244,8 @@ def get_jianying_export_params() -> VideoClipParams:
         font_name=st.session_state.get('font_name', 'Microsoft YaHei'),
         font_size=st.session_state.get('font_size', 24),
         text_fore_color=st.session_state.get('text_fore_color', '#FFFFFF'),
+        stroke_color=st.session_state.get('stroke_color', '#FFFFFF'),
+        stroke_width=st.session_state.get('stroke_width', 1.5),
         subtitle_position=st.session_state.get('subtitle_position', 'bottom'),
         custom_position=st.session_state.get('custom_position', 70.0),
         script_title=st.session_state.get('script_title', ''),

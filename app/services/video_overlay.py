@@ -28,6 +28,14 @@ def resolve_subtitle_position(
     return "center", max(margin, bottom)
 
 
+def resolve_fixed_text_font_sizes(subtitle_font_size: int) -> tuple[int, int]:
+    """Resolve persistent title and episode font sizes from subtitle size."""
+    base_size = max(1, int(subtitle_font_size or 1))
+    title_size = max(int(base_size * 1.35), base_size + 18)
+    episode_size = max(int(base_size * 1.25), base_size + 14)
+    return title_size, episode_size
+
+
 def resolve_fixed_text_overlay_position(
     kind: str,
     position: str,

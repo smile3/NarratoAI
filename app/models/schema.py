@@ -148,7 +148,7 @@ class VideoParams(BaseModel):
     text_background_color: Optional[str] = "transparent"
 
     font_size: int = 60
-    stroke_color: Optional[str] = "#000000"
+    stroke_color: Optional[str] = "#FFFFFF"
     stroke_width: float = 1.5
     n_threads: Optional[int] = 2
     paragraph_number: Optional[int] = 1
@@ -187,7 +187,7 @@ class VideoClipParams(BaseModel):
     font_size: int = 36
     text_fore_color: str = "white"              # 文本前景色
     text_back_color: Optional[str] = None       # 文本背景色
-    stroke_color: str = "black"                 # 描边颜色
+    stroke_color: str = "#FFFFFF"              # 描边颜色
     stroke_width: float = 1.5                   # 描边宽度
     subtitle_position: str = "bottom"   # top, bottom, center, custom
     custom_position: float = 70.0       # 自定义位置
