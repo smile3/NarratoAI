@@ -56,8 +56,13 @@ hide_config = true
         self.assertEqual("openai", config_data["app"]["text_llm_provider"])
         self.assertEqual("Pro/zai-org/GLM-5", config_data["app"]["text_openai_model_name"])
         self.assertEqual("https://api.siliconflow.cn/v1", config_data["app"]["text_openai_base_url"])
+        self.assertEqual("openai", config_data["app"]["video_understanding_llm_provider"])
+        self.assertEqual("gemini/gemini-2.0-flash", config_data["app"]["video_understanding_openai_model_name"])
+        self.assertEqual("https://api.siliconflow.cn/v1", config_data["app"]["video_understanding_openai_base_url"])
+        self.assertEqual(300, config_data["app"]["llm_video_timeout"])
         self.assertEqual("Qwen/Qwen3.5-122B-A10B", saved_config["app"]["vision_openai_model_name"])
         self.assertEqual("Pro/zai-org/GLM-5", saved_config["app"]["text_openai_model_name"])
+        self.assertEqual("gemini/gemini-2.0-flash", saved_config["app"]["video_understanding_openai_model_name"])
         self.assertTrue(saved_config["app"]["hide_config"])
 
 

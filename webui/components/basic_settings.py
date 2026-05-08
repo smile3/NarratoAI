@@ -10,6 +10,8 @@ from app.config.defaults import (
     DEFAULT_TEXT_OPENAI_MODEL_NAME,
     DEFAULT_VISION_LLM_PROVIDER,
     DEFAULT_VISION_OPENAI_MODEL_NAME,
+    DEFAULT_VIDEO_UNDERSTANDING_LLM_PROVIDER,
+    DEFAULT_VIDEO_UNDERSTANDING_OPENAI_MODEL_NAME,
     get_openai_compatible_ui_values,
     normalize_openai_compatible_model_name as normalize_openai_compatible_model_id,
 )
@@ -143,10 +145,11 @@ def show_config_validation_errors(errors: list):
 def render_basic_settings(tr):
     """渲染基础设置面板"""
     with st.expander(tr("Basic Settings"), expanded=False):
-        config_panels = st.columns(3)
+        config_panels = st.columns(4)
         left_config_panel = config_panels[0]
         middle_config_panel = config_panels[1]
         right_config_panel = config_panels[2]
+        video_config_panel = config_panels[3]
 
         with left_config_panel:
             render_language_settings(tr)
@@ -157,6 +160,9 @@ def render_basic_settings(tr):
 
         with right_config_panel:
             render_text_llm_settings(tr)  # 文案生成模型设置
+
+        with video_config_panel:
+            render_video_understanding_llm_settings(tr)  # 视频理解模型设置
 
 
 def render_language_settings(tr):
@@ -434,6 +440,14 @@ def test_openai_compatible_text_model(api_key: str, base_url: str, model_name: s
             return False, "超出速率限制，请稍后重试"
         return False, f"连接失败: {error_msg}"
 
+
+def test_openai_compatible_video_model(api_key: str, base_url: str, model_name: str, tr) -> tuple[bool, str]:
+    """测试 OpenAI 兼容视频理解模型连接。"""
+    success, message = test_openai_compatible_text_model(api_key, base_url, model_name, tr)
+    if success:
+        return True, f"OpenAI 兼容视频理解模型连接成功 ({model_name})"
+    return False, message.replace("文本模型", "视频理解模型").replace("文案生成模型", "视频理解模型")
+
 def render_vision_llm_settings(tr):
     """渲染视频分析模型设置（OpenAI 兼容 统一配置）"""
     st.subheader(tr("Vision Model Settings"))
@@ -586,6 +600,145 @@ def render_vision_llm_settings(tr):
         except Exception as e:
             st.error(f"保存配置失败: {str(e)}")
             logger.error(f"保存视频分析配置失败: {str(e)}")
+
+
+def render_video_understanding_llm_settings(tr):
+    """渲染视频理解模型设置（OpenAI 兼容 统一配置）"""
+    st.subheader(tr("Video Understanding Model Settings"))
+
+    config.app["video_understanding_llm_provider"] = DEFAULT_VIDEO_UNDERSTANDING_LLM_PROVIDER
+
+    full_model_name = (
+        config.app.get("video_understanding_openai_model_name")
+        or DEFAULT_VIDEO_UNDERSTANDING_OPENAI_MODEL_NAME
+    )
+    api_key = config.app.get("video_understanding_openai_api_key", "")
+    base_url = config.app.get("video_understanding_openai_base_url", DEFAULT_OPENAI_COMPATIBLE_BASE_URL)
+
+    current_provider, current_model = get_openai_compatible_ui_values(
+        full_model_name,
+        DEFAULT_VIDEO_UNDERSTANDING_OPENAI_MODEL_NAME,
+        provider=DEFAULT_VIDEO_UNDERSTANDING_LLM_PROVIDER,
+    )
+
+    OPENAI_COMPATIBLE_PROVIDERS = ["openai"]
+
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        selected_provider = st.selectbox(
+            tr("Video Understanding Model Provider"),
+            options=OPENAI_COMPATIBLE_PROVIDERS,
+            index=OPENAI_COMPATIBLE_PROVIDERS.index(current_provider) if current_provider in OPENAI_COMPATIBLE_PROVIDERS else 0,
+            key="video_understanding_provider_select",
+        )
+
+    with col2:
+        model_name_input = st.text_input(
+            tr("Video Understanding Model Name"),
+            value=current_model,
+            help="输入完整模型名称\n\n"
+                 "常用示例:\n"
+                 "• gemini/gemini-2.0-flash\n"
+                 "• gemini/gemini-2.5-pro\n"
+                 "• gpt-4o\n"
+                 "• Qwen/Qwen2.5-VL-32B-Instruct\n\n"
+                 "支持可直接理解视频的 OpenAI 兼容网关",
+            key="video_understanding_model_input",
+        )
+
+    st_video_model_name = normalize_openai_compatible_model_name(model_name_input)
+
+    st_video_api_key = st.text_input(
+        tr("Video Understanding API Key"),
+        value=api_key,
+        type="password",
+        help="对应视频理解模型提供商的 API 密钥",
+        key="video_understanding_api_key",
+    )
+
+    video_base_help, video_base_required, video_placeholder = build_base_url_help(
+        selected_provider, "视频理解模型"
+    )
+    st_video_base_url = st.text_input(
+        tr("Video Understanding Base URL"),
+        value=base_url,
+        help=video_base_help,
+        placeholder=video_placeholder or None,
+        key="video_understanding_base_url",
+    )
+    if video_base_required and not st_video_base_url:
+        info_example = video_placeholder or "https://your-openai-compatible-endpoint/v1"
+        st.info(f"请在上方填写 OpenAI 兼容网关地址，例如：{info_example}")
+
+    if st.button(tr("Test Connection"), key="test_video_understanding_connection"):
+        test_errors = []
+        if not st_video_api_key:
+            test_errors.append("请先输入 API 密钥")
+        if not model_name_input:
+            test_errors.append("请先输入模型名称")
+
+        if test_errors:
+            for error in test_errors:
+                st.error(error)
+        else:
+            with st.spinner(tr("Testing connection...")):
+                try:
+                    success, message = test_openai_compatible_video_model(
+                        api_key=st_video_api_key,
+                        base_url=st_video_base_url,
+                        model_name=st_video_model_name,
+                        tr=tr,
+                    )
+
+                    if success:
+                        st.success(message)
+                    else:
+                        st.error(message)
+                except Exception as e:
+                    st.error(f"测试连接时发生错误: {str(e)}")
+                    logger.error(f"OpenAI 兼容 视频理解模型连接测试失败: {str(e)}")
+
+    video_validation_errors = []
+    video_config_changed = False
+
+    if st_video_model_name:
+        is_valid, error_msg = validate_openai_compatible_model_name(st_video_model_name, "视频理解")
+        if is_valid:
+            config.app["video_understanding_openai_model_name"] = st_video_model_name
+            st.session_state["video_understanding_openai_model_name"] = st_video_model_name
+            video_config_changed = True
+        else:
+            video_validation_errors.append(error_msg)
+
+    if st_video_api_key:
+        is_valid, error_msg = validate_api_key(st_video_api_key, "视频理解")
+        if is_valid:
+            config.app["video_understanding_openai_api_key"] = st_video_api_key
+            st.session_state["video_understanding_openai_api_key"] = st_video_api_key
+            video_config_changed = True
+        else:
+            video_validation_errors.append(error_msg)
+
+    if st_video_base_url:
+        is_valid, error_msg = validate_base_url(st_video_base_url, "视频理解")
+        if is_valid:
+            config.app["video_understanding_openai_base_url"] = st_video_base_url
+            st.session_state["video_understanding_openai_base_url"] = st_video_base_url
+            video_config_changed = True
+        else:
+            video_validation_errors.append(error_msg)
+
+    show_config_validation_errors(video_validation_errors)
+
+    if video_config_changed and not video_validation_errors:
+        try:
+            config.save_config()
+            UnifiedLLMService.clear_cache()
+            if st_video_api_key or st_video_base_url or st_video_model_name:
+                st.success("视频理解模型配置已保存（OpenAI 兼容）")
+        except Exception as e:
+            st.error(f"保存配置失败: {str(e)}")
+            logger.error(f"保存视频理解配置失败: {str(e)}")
 
 
 def test_text_model_connection(api_key, base_url, model_name, provider, tr):

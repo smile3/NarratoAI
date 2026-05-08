@@ -4,6 +4,7 @@
     # LLM API 超时配置（秒）
     llm_vision_timeout = 120  # 视觉模型基础超时时间
     llm_text_timeout = 180    # 文本模型基础超时时间（解说文案生成等复杂任务需要更长时间）
+    llm_video_timeout = 3600   # 视频理解模型基础超时时间（完整视频输入通常需要更长时间）
     llm_max_retries = 3       # API 重试次数
 
     ##########################################
@@ -40,6 +41,19 @@
     text_openai_model_name = "Pro/zai-org/GLM-5"
     text_openai_api_key = ""  # 填入对应 provider 的 API key
     text_openai_base_url = "https://api.siliconflow.cn/v1"  # 可选：自定义 API base URL（官方 OpenAI 可留空）
+
+    # ===== 视频理解模型配置 =====
+    # 用于“视频理解解说”模式：不抽帧、不调用原视觉/文本模型，直接把完整视频发给支持视频理解的模型。
+    video_understanding_llm_provider = "openai"
+
+    # 常用视频理解模型示例：
+    #   - Gemini: gemini/gemini-2.0-flash (推荐，支持视频理解)
+    #   - Gemini: gemini/gemini-2.5-pro (高精度)
+    #   - OpenAI: gpt-4o（需确认接入网关支持视频输入）
+    video_understanding_openai_model_name = "gemini/gemini-2.0-flash"
+    video_understanding_openai_api_key = ""  # 填入视频理解模型的 API key
+    video_understanding_openai_base_url = "https://api.siliconflow.cn/v1"  # 可选：自定义 API base URL
+    video_understanding_max_tokens = 8000
 
     # ===== API Keys 参考 =====
     # 主流 LLM Providers API Key 获取地址：

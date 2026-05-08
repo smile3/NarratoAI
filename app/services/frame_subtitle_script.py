@@ -1,7 +1,12 @@
-import json
+from loguru import logger
 from typing import Any, Callable
 
 from app.services import script_enhancement
+from app.services.prompts import PromptManager
+
+
+FRAME_SUBTITLE_PROMPT_CATEGORY = "short_drama_narration"
+FRAME_SUBTITLE_PROMPT_NAME = "frame_subtitle_generation"
 
 
 def build_frame_subtitle_prompt(
@@ -11,39 +16,16 @@ def build_frame_subtitle_prompt(
     custom_prompt: str = "",
 ) -> str:
     """Build a prompt that asks the text model to combine frame analysis and subtitles."""
-    theme_line = f"视频主题：{video_theme.strip()}\n" if video_theme and video_theme.strip() else ""
-    custom_line = f"补充要求：{custom_prompt.strip()}\n" if custom_prompt and custom_prompt.strip() else ""
-    return f"""
-你是一位专业短剧剪辑和短视频解说脚本策划。请同时参考【画面分析】和【字幕内容】，生成适合短剧推广的剪辑脚本。
-{theme_line}{custom_line}
-核心要求：
-1. 必须把画面和字幕结合判断剧情，不要只依赖字幕，也不要只看画面；画面决定镜头是否有看点，字幕帮助理解人物关系和冲突。
-2. 优先选择冲突、反转、秘密、危机、身份差、误会升级等高吸引力片段。
-3. 每个片段时长要根据剧情自然变化，不要所有片段固定同一长度；短剧节奏要快，单个片段尽量短。
-4. 解说文案要和画面时长匹配，短镜头少说，长镜头适当展开，不要明显超过画面可承载时长。
-5. 成片尽量控制在 3 分钟左右，最多不要超过 5 分钟；可以删减无关铺垫，但前后衔接不能突兀。
-6. 开头要有强钩子，结尾要留下悬念，吸引继续观看，不需要把故事讲完。
-7. 只输出 JSON，不要输出解释文字。
-
-输出格式：
-{{
-  "items": [
-    {{
-      "_id": 1,
-      "timestamp": "00:00:01,000-00:00:05,000",
-      "picture": "画面描述",
-      "narration": "解说文案",
-      "OST": 2
-    }}
-  ]
-}}
-
-【画面分析】
-{frame_analysis_markdown}
-
-【字幕内容】
-{subtitle_content}
-""".strip()
+    return PromptManager.get_prompt(
+        category=FRAME_SUBTITLE_PROMPT_CATEGORY,
+        name=FRAME_SUBTITLE_PROMPT_NAME,
+        parameters={
+            "frame_analysis_markdown": frame_analysis_markdown,
+            "subtitle_content": subtitle_content,
+            "video_theme": video_theme,
+            "custom_prompt": custom_prompt,
+        },
+    )
 
 
 def generate_frame_subtitle_script(
@@ -60,10 +42,17 @@ def generate_frame_subtitle_script(
         video_theme=video_theme,
         custom_prompt=custom_prompt,
     )
+    system_prompt = (
+        PromptManager.get_prompt_object(
+            category=FRAME_SUBTITLE_PROMPT_CATEGORY,
+            name=FRAME_SUBTITLE_PROMPT_NAME,
+        ).get_system_prompt()
+        or "你是一位专业短剧剪辑解说脚本专家，必须输出合法 JSON。"
+    )
     generator = text_generator or _generate_text_with_config
     raw_payload = generator(
         prompt,
-        "你是一位专业短剧剪辑解说脚本专家，必须输出合法 JSON。",
+        system_prompt,
         0.8,
         "json",
     )
@@ -83,18 +72,110 @@ def normalize_frame_subtitle_items(items: list[dict[str, Any]]) -> list[dict[str
         narration = str(item.get("narration", "") or "").strip()
         if not timestamp or not narration:
             continue
+        ost = _normalize_ost_value(item.get("OST"), narration=narration)
         normalized.append(
             {
                 "_id": len(normalized) + 1,
                 "timestamp": timestamp,
                 "picture": picture,
                 "narration": narration,
-                "OST": 2,
+                "OST": ost,
             }
         )
     if not normalized:
         raise ValueError("逐帧+字幕脚本生成失败：返回片段缺少 timestamp 或 narration")
+
+    normalized = _ensure_mixed_ost_beats(normalized)
+
     return normalized
+
+
+def _normalize_ost_value(raw_ost: Any, *, narration: str) -> int:
+    try:
+        ost = int(raw_ost)
+    except (TypeError, ValueError):
+        ost = -1
+
+    if ost in (0, 1):
+        return ost
+
+    if _looks_like_original_audio_segment(narration):
+        return 1
+    return 0
+
+
+def _looks_like_original_audio_segment(text: str) -> bool:
+    text = (text or "").strip()
+    if not text:
+        return False
+
+    original_audio_keywords = (
+        "播放原片",
+        "原声",
+        "原音",
+        "原台词",
+    )
+    return any(keyword in text for keyword in original_audio_keywords)
+
+
+def _ensure_mixed_ost_beats(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Ensure the mixed short-drama mode keeps both narration and original-audio beats."""
+    has_narration = any(item.get("OST") == 0 for item in items)
+    has_original_audio = any(item.get("OST") == 1 for item in items)
+    if has_narration and has_original_audio:
+        return items
+    if len(items) < 2:
+        logger.warning("逐帧+字幕脚本未混合 OST=0/1，且片段数量不足，无法自动补齐混合结构")
+        return items
+
+    if not has_original_audio:
+        candidate = max(items, key=_original_audio_candidate_score)
+        candidate["OST"] = 1
+        candidate["narration"] = f"播放原片{candidate.get('_id', '')}".strip()
+        logger.warning(f"逐帧+字幕脚本未生成 OST=1，已将片段 {candidate.get('_id')} 设为原声片段")
+
+    if not has_narration:
+        candidate = min(items, key=_original_audio_candidate_score)
+        candidate["OST"] = 0
+        if _looks_like_original_audio_segment(candidate.get("narration", "")):
+            candidate["narration"] = _fallback_narration_from_picture(candidate)
+        logger.warning(f"逐帧+字幕脚本未生成 OST=0，已将片段 {candidate.get('_id')} 设为解说片段")
+
+    return items
+
+
+def _original_audio_candidate_score(item: dict[str, Any]) -> int:
+    text = f"{item.get('picture', '')} {item.get('narration', '')}"
+    high_tension_keywords = (
+        "质问",
+        "争吵",
+        "对峙",
+        "怒吼",
+        "哭喊",
+        "告白",
+        "揭穿",
+        "威胁",
+        "崩溃",
+        "反转",
+        "真相",
+        "身份",
+        "秘密",
+        "危机",
+        "爆发",
+        "惊呼",
+        "台词",
+        "对白",
+    )
+    score = sum(3 for keyword in high_tension_keywords if keyword in text)
+    score += min(len(str(item.get("picture", ""))), 80) // 20
+    return score
+
+
+def _fallback_narration_from_picture(item: dict[str, Any]) -> str:
+    picture = str(item.get("picture", "") or "").strip()
+    if picture:
+        return f"真正的转折，就藏在这一幕里：{picture}"
+    return "真正的转折，就从这一刻开始。"
 
 
 def _generate_text_with_config(

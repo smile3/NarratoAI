@@ -17,12 +17,13 @@ from app.utils import utils, video_processor
 class DocumentaryFrameAnalysisService:
     PROMPT_TEMPLATE = """
 我提供了 {frame_count} 张视频帧，它们按时间顺序排列，代表一个连续的视频片段。
-首先，请详细描述每一帧的关键视觉信息（包含：主要内容、人物、动作和场景）。
-然后，基于所有帧的分析，请用简洁的语言总结整个视频片段中发生的主要活动或事件流程。
+首先，请详细描述每一帧的关键视觉信息（包含：主要内容、人物、动作、表情、场景和镜头张力）。
+如果画面像短剧/剧情内容，请特别关注人物关系、冲突升级、情绪变化、身份差、误会、反转、危机和可能需要保留原声的对白场面（例如质问、争吵、告白、揭穿、威胁、崩溃）。
+然后，基于所有帧的分析，请用简洁的语言总结整个视频片段中发生的主要活动或事件流程，并标出是否存在值得剪成原声片段的高张力时刻。
 请务必使用 JSON 格式输出。
 JSON 必须包含以下键：
 - frame_observations: 数组，且长度必须为 {frame_count}
-- overall_activity_summary: 字符串，描述整个批次主要活动
+- overall_activity_summary: 字符串，描述整个批次主要活动、冲突/情绪变化，以及可能的原声爆点
 示例结构：
 {{
   "frame_observations": [

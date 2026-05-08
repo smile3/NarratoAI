@@ -11,6 +11,8 @@
 
 from .plot_analysis import PlotAnalysisPrompt
 from .script_generation import ScriptGenerationPrompt
+from .frame_subtitle_generation import FrameSubtitleGenerationPrompt
+from .video_understanding_generation import VideoUnderstandingGenerationPrompt
 from ..manager import PromptManager
 
 
@@ -25,9 +27,19 @@ def register_prompts():
     script_generation_prompt = ScriptGenerationPrompt()
     PromptManager.register_prompt(script_generation_prompt, is_default=True)
 
+    # 注册逐帧+字幕短剧混剪提示词
+    frame_subtitle_generation_prompt = FrameSubtitleGenerationPrompt()
+    PromptManager.register_prompt(frame_subtitle_generation_prompt, is_default=True)
+
+    # 注册视频理解短剧解说提示词
+    video_understanding_generation_prompt = VideoUnderstandingGenerationPrompt()
+    PromptManager.register_prompt(video_understanding_generation_prompt, is_default=True)
+
 
 __all__ = [
     "PlotAnalysisPrompt",
     "ScriptGenerationPrompt",
+    "FrameSubtitleGenerationPrompt",
+    "VideoUnderstandingGenerationPrompt",
     "register_prompts"
 ]

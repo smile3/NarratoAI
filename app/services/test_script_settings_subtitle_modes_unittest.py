@@ -11,6 +11,15 @@ class ScriptSettingsSubtitleModeTests(unittest.TestCase):
         self.assertIn("ensure_subtitle_for_current_video", source)
         self.assertIn("local_whisper_subtitle", source)
 
+    def test_script_settings_declares_video_understanding_mode_without_subtitle_requirement(self):
+        source = Path("webui/components/script_settings.py").read_text(encoding="utf-8")
+
+        self.assertIn("MODE_VIDEO_UNDERSTANDING", source)
+        self.assertIn('tr("Video Understanding Generate")', source)
+        self.assertIn("generate_video_understanding_script_tool", source)
+        self.assertIn("MODE_VIDEO_UNDERSTANDING]", source)
+        self.assertNotIn("SUBTITLE_REQUIRED_MODES = [MODE_SHORT, MODE_SUMMARY, MODE_FRAME_SUBTITLE, MODE_VIDEO_UNDERSTANDING]", source)
+
     def test_script_settings_no_longer_renders_aliyun_fun_asr_panel(self):
         source = Path("webui/components/script_settings.py").read_text(encoding="utf-8")
 

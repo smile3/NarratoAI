@@ -15,6 +15,7 @@ from webui.tools.generate_frame_subtitle import generate_frame_subtitle_script_t
 from webui.tools.generate_script_docu import generate_script_docu
 from webui.tools.generate_script_short import generate_script_short
 from webui.tools.generate_short_summary import generate_script_short_sunmmary
+from webui.tools.generate_video_understanding import generate_video_understanding_script_tool
 
 
 MODE_FILE = "file_selection"
@@ -22,7 +23,8 @@ MODE_AUTO = "auto"
 MODE_SHORT = "short"
 MODE_SUMMARY = "summary"
 MODE_FRAME_SUBTITLE = "frame_subtitle"
-GENERATED_SCRIPT_MODES = [MODE_AUTO, MODE_SHORT, MODE_SUMMARY, MODE_FRAME_SUBTITLE]
+MODE_VIDEO_UNDERSTANDING = "video_understanding"
+GENERATED_SCRIPT_MODES = [MODE_AUTO, MODE_SHORT, MODE_SUMMARY, MODE_FRAME_SUBTITLE, MODE_VIDEO_UNDERSTANDING]
 SUBTITLE_REQUIRED_MODES = [MODE_SHORT, MODE_SUMMARY, MODE_FRAME_SUBTITLE]
 
 
@@ -54,11 +56,14 @@ def render_script_panel(tr):
         elif script_path == MODE_FRAME_SUBTITLE:
             # 逐帧+字幕
             render_frame_subtitle_options(tr)
+        elif script_path == MODE_VIDEO_UNDERSTANDING:
+            # 视频理解解说
+            render_video_understanding_options(tr)
         else:
             # 默认为空
             pass
 
-        if script_path != MODE_AUTO:
+        if script_path not in [MODE_AUTO, MODE_VIDEO_UNDERSTANDING]:
             render_script_title_display(tr)
 
         # 渲染脚本操作按钮
@@ -80,6 +85,7 @@ def render_script_file(tr, params):
         tr("Short Generate"): MODE_SHORT,
         tr("Short Drama Summary"): MODE_SUMMARY,
         tr("Frame Subtitle Generate"): MODE_FRAME_SUBTITLE,
+        tr("Video Understanding Generate"): MODE_VIDEO_UNDERSTANDING,
     }
     
     # 获取当前状态
@@ -97,6 +103,8 @@ def render_script_file(tr, params):
         default_index = mode_keys.index(tr("Short Drama Summary"))
     elif current_path == MODE_FRAME_SUBTITLE:
         default_index = mode_keys.index(tr("Frame Subtitle Generate"))
+    elif current_path == MODE_VIDEO_UNDERSTANDING:
+        default_index = mode_keys.index(tr("Video Understanding Generate"))
     else:
         default_index = mode_keys.index(tr("Select/Upload Script"))
 
@@ -301,6 +309,46 @@ def render_frame_subtitle_options(tr):
     """渲染逐帧+字幕模式选项。"""
     render_subtitle_upload(tr)
     render_video_details(tr)
+
+
+def render_video_understanding_options(tr):
+    """渲染视频理解解说模式选项。"""
+    video_theme = st.text_input(tr("Video Theme"))
+
+    prompt_options = script_enhancement.get_prompt_style_options()
+    prompt_keys = [key for key, _label in prompt_options]
+    prompt_labels = {key: label for key, label in prompt_options}
+    saved_prompt_style = st.session_state.get('prompt_style', 'short_drama')
+    if saved_prompt_style not in prompt_keys:
+        saved_prompt_style = 'short_drama'
+
+    if 'custom_prompt_text_area' not in st.session_state:
+        st.session_state['custom_prompt_text_area'] = script_enhancement.get_prompt_template(saved_prompt_style)
+
+    def refresh_prompt_template():
+        selected_style = st.session_state.get('prompt_style', 'short_drama')
+        st.session_state['custom_prompt_text_area'] = script_enhancement.get_prompt_template(selected_style)
+
+    st.selectbox(
+        tr("Prompt Style"),
+        options=prompt_keys,
+        format_func=lambda key: prompt_labels[key],
+        index=prompt_keys.index(saved_prompt_style),
+        key="prompt_style",
+        on_change=refresh_prompt_template,
+        help=tr("Switch default prompt templates for different narration styles"),
+    )
+
+    custom_prompt = st.text_area(
+        tr("Generation Prompt"),
+        key="custom_prompt_text_area",
+        help=tr("Custom prompt for LLM, leave empty to use default prompt"),
+        height=180,
+    )
+
+    st.session_state['video_theme'] = video_theme
+    st.session_state['custom_prompt'] = custom_prompt
+    return video_theme, custom_prompt
 
 
 def render_short_generate_options(tr):
@@ -514,12 +562,14 @@ def render_script_buttons(tr, params):
         button_name = tr("生成短剧解说脚本")
     elif script_path == MODE_FRAME_SUBTITLE:
         button_name = tr("Generate Frame Subtitle Script")
+    elif script_path == MODE_VIDEO_UNDERSTANDING:
+        button_name = tr("Generate Video Understanding Script")
     elif script_path.endswith("json"):
         button_name = tr("Load Video Script")
     else:
         button_name = tr("Please Select Script File")
 
-    if script_path in GENERATED_SCRIPT_MODES:
+    if script_path in GENERATED_SCRIPT_MODES and script_path != MODE_VIDEO_UNDERSTANDING:
         st.checkbox(
             tr("Enable Script Polishing"),
             value=st.session_state.get('enable_script_polishing', False),
@@ -611,6 +661,12 @@ def run_script_action(tr, params, script_path):
             return False
         if st.session_state.get('auto_generate_script_title', True) and not maybe_generate_script_title_after_generation(tr):
             return False
+        return bool(st.session_state.get('video_clip_json'))
+    elif script_path == MODE_VIDEO_UNDERSTANDING:
+        success = generate_video_understanding_script_tool(params)
+        if not success:
+            return False
+        st.session_state['script_title'] = ''
         return bool(st.session_state.get('video_clip_json'))
     else:
         load_script(tr, script_path)
